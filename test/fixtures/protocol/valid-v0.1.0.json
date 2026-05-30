@@ -1,0 +1,126 @@
+{
+  "version": "0.1.0",
+  "sequence": 1,
+  "methods": [
+    {
+      "name": "session.create",
+      "params": [
+        { "name": "name", "type": "string", "required": true },
+        { "name": "options", "type": "object", "required": false }
+      ]
+    },
+    {
+      "name": "session.attach",
+      "params": [
+        { "name": "name", "type": "string", "required": true }
+      ]
+    },
+    {
+      "name": "session.list",
+      "params": []
+    },
+    {
+      "name": "session.terminate",
+      "params": [
+        { "name": "name", "type": "string", "required": true }
+      ]
+    },
+    {
+      "name": "pane.create",
+      "params": [
+        { "name": "session", "type": "string", "required": true },
+        { "name": "argv", "type": "string_array", "required": true },
+        { "name": "env", "type": "object", "required": true },
+        { "name": "cwd", "type": "string", "required": true },
+        { "name": "size", "type": "object", "required": true }
+      ]
+    },
+    {
+      "name": "pane.send",
+      "params": [
+        { "name": "pane_id", "type": "string", "required": true },
+        { "name": "bytes", "type": "bytes", "required": true }
+      ]
+    },
+    {
+      "name": "pane.resize",
+      "params": [
+        { "name": "pane_id", "type": "string", "required": true },
+        { "name": "cols", "type": "u16", "required": true },
+        { "name": "rows", "type": "u16", "required": true }
+      ]
+    },
+    {
+      "name": "pane.snapshot",
+      "params": [
+        { "name": "pane_id", "type": "string", "required": true }
+      ]
+    },
+    {
+      "name": "pane.close",
+      "params": [
+        { "name": "pane_id", "type": "string", "required": true }
+      ]
+    },
+    {
+      "name": "agent.wait_idle",
+      "params": [
+        { "name": "pane_id", "type": "string", "required": true },
+        { "name": "timeout_ms", "type": "u64", "required": true },
+        { "name": "harness", "type": "object", "required": true }
+      ]
+    },
+    {
+      "name": "record.start",
+      "params": [
+        { "name": "pane_id", "type": "string", "required": true },
+        { "name": "path", "type": "string", "required": true },
+        { "name": "policy", "type": "object", "required": true }
+      ]
+    },
+    {
+      "name": "record.stop",
+      "params": [
+        { "name": "recording_id", "type": "string", "required": true }
+      ]
+    },
+    {
+      "name": "tap.open",
+      "params": [
+        { "name": "pane_id", "type": "string", "required": true },
+        { "name": "filter", "type": "object", "required": true }
+      ]
+    },
+    {
+      "name": "tap.close",
+      "params": [
+        { "name": "tap_id", "type": "string", "required": true }
+      ]
+    },
+    {
+      "name": "system.health",
+      "params": []
+    }
+  ],
+  "errors": [
+    { "code": -32700, "name": "parse_error", "category": "json_rpc" },
+    { "code": -32600, "name": "invalid_request", "category": "json_rpc" },
+    { "code": -32601, "name": "method_not_found", "category": "json_rpc" },
+    { "code": -32602, "name": "invalid_params", "category": "json_rpc" },
+    { "code": -32603, "name": "internal_error", "category": "json_rpc" },
+    { "code": 1001, "name": "session_not_found", "category": "lifecycle" },
+    { "code": 1002, "name": "daemon_not_running", "category": "lifecycle" },
+    { "code": 1003, "name": "control_socket_unavailable", "category": "lifecycle" },
+    { "code": 1004, "name": "control_socket_timeout", "category": "lifecycle" },
+    { "code": 2001, "name": "validation_unknown_required_field", "category": "validation" },
+    { "code": 2002, "name": "validation_invalid_enum_value", "category": "validation" },
+    { "code": 2003, "name": "validation_non_monotonic_sequence", "category": "validation" },
+    { "code": 2004, "name": "validation_missing_method", "category": "validation" },
+    { "code": 2005, "name": "validation_missing_error_code", "category": "validation" }
+  ],
+  "events": [
+    { "seq": 1, "kind": "request" },
+    { "seq": 2, "kind": "response" },
+    { "seq": 3, "kind": "notification" }
+  ]
+}

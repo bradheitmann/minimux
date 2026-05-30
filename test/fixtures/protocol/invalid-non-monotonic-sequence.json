@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "sequence": 4,
+  "methods": [],
+  "errors": [],
+  "events": [
+    { "seq": 1, "kind": "request" },
+    { "seq": 1, "kind": "response" }
+  ]
+}

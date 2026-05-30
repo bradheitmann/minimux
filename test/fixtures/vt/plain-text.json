@@ -1,0 +1,18 @@
+{
+  "name": "plain-text",
+  "dimensions": {"cols": 12, "rows": 3},
+  "chunks": ["plain\ntext"],
+  "resizes": [],
+  "process": {"status": "running", "exit_code": null},
+  "recovery_state": "clean",
+  "expected": {
+    "visible_text": "plain\ntext",
+    "cursor": {"x": 4, "y": 1},
+    "sequence_min": 10,
+    "alternate_screen": false,
+    "cells": [
+      {"x": 0, "y": 0, "text": "p", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}},
+      {"x": 0, "y": 1, "text": "t", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}}
+    ]
+  }
+}

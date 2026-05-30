@@ -1,0 +1,46 @@
+.DS_Store
+
+# Build outputs and local scratch
+.tmp/
+.zig-cache/
+zig-cache/
+zig-out/
+*.log
+
+# Edge Agentic Framework
+.edge-agentic/runtime/
+.edge-agentic/system
+.edge-agentic/VERSION
+.edge-agentic/local/
+.loop/
+
+# Intelligence Dissemination Network (briefs are transient)
+.edge-agentic/local/intelligence/inbox/IB-*.md
+.edge-agentic/local/intelligence/inbox-archive/
+
+# Edge-Agentic Claude Code symlinks (machine-specific)
+.claude/
+.codex/
+.claude/commands/
+.claude/skills/
+.mcp.json
+
+# Task list persistence (machine-specific)
+.envrc
+
+# Private planning, research, and local agent context
+project/
+marketing/
+holdout/
+config/
+docs/knowledge/
+.claude/
+.codex/
+.edge-agentic/
+BRAND-VOICE.md
+CLAUDE.md
+ChatGPT-merged-*.md
+*SYNTHESIS.md
+scripts/generate-minimux-v22-preeng.mjs
+scripts/governance-setup-diagnostics.sh
+minimux_comp_landscape_cc_SYNTHESIS.md

@@ -1,0 +1,17 @@
+{
+  "name": "alternate-screen",
+  "dimensions": {"cols": 12, "rows": 2},
+  "chunks": ["base\u001b[?1049hALT\u001b[?1049l"],
+  "resizes": [],
+  "process": {"status": "running", "exit_code": null},
+  "recovery_state": "clean",
+  "expected": {
+    "visible_text": "base",
+    "cursor": {"x": 4, "y": 0},
+    "sequence_min": 9,
+    "alternate_screen": false,
+    "cells": [
+      {"x": 0, "y": 0, "text": "b", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}}
+    ]
+  }
+}

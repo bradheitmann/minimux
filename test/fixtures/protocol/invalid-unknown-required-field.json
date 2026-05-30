@@ -1,0 +1,15 @@
+{
+  "version": "0.1.0",
+  "sequence": 2,
+  "methods": [
+    {
+      "name": "session.create",
+      "params": [
+        { "name": "name", "type": "string", "required": true },
+        { "name": "tty", "type": "string", "required": true }
+      ]
+    }
+  ],
+  "errors": [],
+  "events": []
+}

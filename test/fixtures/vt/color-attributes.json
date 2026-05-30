@@ -1,0 +1,18 @@
+{
+  "name": "color-attributes",
+  "dimensions": {"cols": 16, "rows": 2},
+  "chunks": ["\u001b[31;1mred\u001b[0m plain"],
+  "resizes": [],
+  "process": {"status": "running", "exit_code": null},
+  "recovery_state": "clean",
+  "expected": {
+    "visible_text": "red plain",
+    "cursor": {"x": 9, "y": 0},
+    "sequence_min": 11,
+    "alternate_screen": false,
+    "cells": [
+      {"x": 0, "y": 0, "text": "r", "attrs": {"fg": "red", "bg": "default", "bold": true, "underline": false, "inverse": false}},
+      {"x": 4, "y": 0, "text": "p", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}}
+    ]
+  }
+}

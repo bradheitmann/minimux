@@ -1,0 +1,14 @@
+{
+  "version": "0.1.0",
+  "sequence": 3,
+  "methods": [
+    {
+      "name": "session.create",
+      "params": [
+        { "name": "name", "type": "integer", "required": true }
+      ]
+    }
+  ],
+  "errors": [],
+  "events": []
+}
