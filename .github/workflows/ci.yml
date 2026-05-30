@@ -26,7 +26,12 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y jq ripgrep
           else
-            brew install jq ripgrep
+            missing=()
+            command -v jq >/dev/null 2>&1 || missing+=(jq)
+            command -v rg >/dev/null 2>&1 || missing+=(ripgrep)
+            if (( ${#missing[@]} > 0 )); then
+              brew install "${missing[@]}"
+            fi
           fi
       - name: Release validation
         shell: bash
