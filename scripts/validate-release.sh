@@ -24,6 +24,7 @@ run_gate() {
     printf 'PASS %s\n' "$name"
   else
     printf 'FAIL %s; see %s\n' "$name" "$log" >&2
+    sed -n '1,200p' "$log" >&2 || true
     return 1
   fi
   test -f "$log"

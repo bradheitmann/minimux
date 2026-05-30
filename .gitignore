@@ -29,11 +29,11 @@ zig-out/
 .envrc
 
 # Private planning, research, and local agent context
-project/
-marketing/
-holdout/
-config/
-docs/knowledge/
+/project/
+/marketing/
+/holdout/
+/config/
+/docs/knowledge/
 .claude/
 .codex/
 .edge-agentic/
