@@ -173,7 +173,7 @@ check_release_checklist() {
       printf 'missing_problem_mapping %s\n' "$problem" >>"$log"
     fi
   done
-  for evidence_class in unit integration protocol recovery fuzz security holdout; do
+  for evidence_class in unit integration protocol recovery fuzz security holdout stress; do
     if ! rg -q "$evidence_class" docs/release-gates.md; then
       printf 'missing_evidence_class %s\n' "$evidence_class" >>"$log"
     fi
@@ -188,7 +188,7 @@ check_release_checklist() {
 check_release_evidence() {
   local log="$EVIDENCE_DIR/checks/release-evidence.log"
   : >"$log"
-  for required in build test c-smoke fuzz-transport holdout-s002 holdout-s006 holdout-s008 holdout-s011 docs-prototype; do
+  for required in build test c-smoke fuzz-transport holdout-s002 holdout-s006 holdout-s008 holdout-s011 holdout-s012 holdout-s013 docs-prototype; do
     if [ ! -f "$EVIDENCE_DIR/commands/$required.log" ]; then
       printf 'missing_command_evidence %s\n' "$required" >>"$log"
     fi
@@ -213,6 +213,8 @@ run_gate holdout-s002 bash scripts/holdout/s002_killshot_recovery.sh
 run_gate holdout-s006 sh scripts/holdout/s006_recovery_faults.sh
 run_gate holdout-s008 bash scripts/holdout/s008_record_tap_wait.sh
 run_gate holdout-s011 bash scripts/holdout/s011_docs_first_contact.sh
+run_gate holdout-s012 bash scripts/holdout/s012_concurrent_failure_isolation.sh
+run_gate holdout-s013 bash scripts/holdout/s013_repeated_observe_recovery_stress.sh
 run_gate docs-prototype bash examples/prototype.sh --check
 
 check_secret_scan
@@ -225,5 +227,5 @@ check_release_evidence
 
 jq -n \
   --arg evidence_dir "$EVIDENCE_DIR" \
-  '{ ok: true, evidence_dir: $evidence_dir, commands: 9, checks: 7 }' \
+  '{ ok: true, evidence_dir: $evidence_dir, commands: 11, checks: 7 }' \
   | tee "$EVIDENCE_DIR/Summary.json"

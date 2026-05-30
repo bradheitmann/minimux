@@ -20,6 +20,8 @@ minimux v0.1.0 is scoped as a daemon substrate for agent-owned PTY sessions:
 
 The release gate is `scripts/validate-release.sh`. It runs build, tests,
 holdouts, public hygiene checks, secret-pattern checks, and scope-drift checks.
+The holdout set includes concurrent daemon failure isolation for two live
+sessions and repeated observe/recovery stress cycles.
 
 ## Before The v0.1.0 Tag
 
@@ -33,8 +35,8 @@ holdouts, public hygiene checks, secret-pattern checks, and scope-drift checks.
 ## After v0.1.0
 
 - Expand VT fixture coverage and cross-platform soak tests.
-- Add longer stress runs for repeated run, send, snapshot, record, tap, kill,
-  and recover cycles.
+- Expand repeated run, send, snapshot, record, tap, kill, and recover stress
+  runs beyond the release-gate smoke length.
 - Harden remote transport with end-to-end integration tests beyond parser fuzz.
 - Publish adapter examples for CustomPaneBackend and substrate placement.
 - Improve contributor docs around test layout and release validation.

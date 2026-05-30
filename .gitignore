@@ -2,6 +2,7 @@
 
 # Build outputs and local scratch
 .tmp/
+.minimux-state/
 .zig-cache/
 zig-cache/
 zig-out/
