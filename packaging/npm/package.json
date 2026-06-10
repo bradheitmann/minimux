@@ -4,7 +4,10 @@
   "description": "Daemon for agent-owned PTY sessions with crash-recoverable terminal state. Installs the prebuilt minimux binary from GitHub Releases.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/bradheitmann/minimux",
-  "repository": "github:bradheitmann/minimux",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bradheitmann/minimux.git"
+  },
   "bugs": "https://github.com/bradheitmann/minimux/issues",
   "keywords": [
     "pty",
