@@ -31,9 +31,10 @@ sessions and repeated observe/recovery stress cycles.
   (`docs/RELEASE-NOTES.md`).
 - [x] Document build-from-source install steps.
 - [x] Publish an orchestrator-seat example (`examples/orchestrator-client.mjs`).
+- [x] Choose the binary distribution path (GitHub Releases via the `release`
+  workflow on tag push: native ReleaseSafe builds for x86_64/aarch64 Linux
+  and macOS with SHA-256 checksums) and add packaged install instructions.
 - [ ] Keep GitHub Actions green on macOS and Linux.
-- [ ] Choose the binary distribution path and add packaged install
-  instructions.
 - [ ] Keep the public repository free of private planning, local paths,
   personal identifiers, and private research artifacts.
 

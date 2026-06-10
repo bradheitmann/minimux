@@ -11,8 +11,16 @@ starts in [docs/AGENTS.md](docs/AGENTS.md).
 
 ## Install
 
-minimux builds from source with Zig 0.16.0 on macOS and Linux. There is no
-package distribution yet; the binary distribution path is a roadmap item.
+Tagged releases publish prebuilt binaries for x86_64/aarch64 Linux and macOS
+on the GitHub Releases page, packaged as tarballs with SHA-256 checksums.
+
+```bash
+tar -xzf minimux-<version>-<target>.tar.gz
+install -m 0755 minimux-<version>-<target>/minimux ~/.local/bin/minimux
+minimux --json system.health
+```
+
+To build from source with Zig 0.16.0:
 
 ```bash
 zig build --summary all
