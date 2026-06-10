@@ -199,7 +199,7 @@ pub fn runPrototypeLoop(
 
 /// Drains background output from every runtime pane once per control tick so
 /// snapshots, taps, and recordings stay current without a pane.send. Pump
-/// errors must not kill the daemon: a disk-full recording shortfall surfaces
+/// errors must not kill the daemon: a full-disk recording shortfall surfaces
 /// to the next requester that touches the recording, while the shadow VT
 /// state has already absorbed the drained bytes.
 fn pumpAllRuntimePanes(
