@@ -11,8 +11,21 @@ starts in [docs/AGENTS.md](docs/AGENTS.md).
 
 ## Install
 
-Tagged releases publish prebuilt binaries for x86_64/aarch64 Linux and macOS
-on the GitHub Releases page, packaged as tarballs with SHA-256 checksums.
+Homebrew (macOS and Linux):
+
+```bash
+brew install bradheitmann/tap/minimux
+```
+
+npm (downloads the matching release binary and verifies its checksum):
+
+```bash
+npm install -g @bradheitmann/minimux
+```
+
+Tagged releases also publish prebuilt binaries for x86_64/aarch64 Linux and
+macOS on the GitHub Releases page, packaged as tarballs with SHA-256
+checksums:
 
 ```bash
 tar -xzf minimux-<version>-<target>.tar.gz

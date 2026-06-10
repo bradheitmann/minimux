@@ -116,13 +116,29 @@ check_public_hygiene() {
     return 1
   fi
 
-  if rg -n -I --hidden \
+  rg -n -I --hidden \
     --glob '!.git/**' \
     --glob '!.edge-agentic/**' \
     --glob '!.zig-cache/**' \
     --glob '!zig-cache/**' \
     --glob '!zig-out/**' \
-    '/U[s]ers/|b[r]adleyheitmann|b[r]adheitmann|B[r]ad Heitmann|B[r]ad |b[r]ad@|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' . >"$pii_log"; then
+    '/U[s]ers/|b[r]adleyheitmann|b[r]adheitmann|B[r]ad Heitmann|B[r]ad |b[r]ad@|[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' . >"$pii_log.raw" || true
+  # Public publishing coordinates (the GitHub owner handle as part of release,
+  # tap, or npm install paths) are the project's published identity, not
+  # private PII. Everything else in the personal-identifier pattern still
+  # fails the gate.
+  : >"$pii_log"
+  while IFS= read -r line; do
+    case "$line" in
+      *'github.com/b''radheitmann/minimux'*) continue ;;
+      *'github:b''radheitmann/minimux'*) continue ;;
+      *'@b''radheitmann/minimux'*) continue ;;
+      *'b''radheitmann/tap'*) continue ;;
+    esac
+    printf '%s\n' "$line" >>"$pii_log"
+  done <"$pii_log.raw"
+  rm -f "$pii_log.raw"
+  if [ -s "$pii_log" ]; then
     printf 'error.PublicHygiene: personal or local path reference found; see %s\n' "$pii_log" >&2
     return 1
   fi
