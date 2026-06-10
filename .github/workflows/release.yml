@@ -23,8 +23,12 @@ jobs:
             artifact_target: aarch64-linux
           - os: macos-latest
             artifact_target: aarch64-macos
-          - os: macos-13
+          # GitHub retired the Intel macos-13 runner pool; the x86_64-macos
+          # artifact cross-compiles on Apple Silicon and smoke-tests under
+          # Rosetta 2 instead of running the full native test suite.
+          - os: macos-latest
             artifact_target: x86_64-macos
+            zig_target: x86_64-macos
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6
@@ -34,8 +38,13 @@ jobs:
       - name: Build and test (ReleaseSafe)
         shell: bash
         run: |
-          zig build -Doptimize=ReleaseSafe --summary all
-          zig build test --summary all
+          if [[ -n "${{ matrix.zig_target }}" ]]; then
+            zig build -Dtarget=${{ matrix.zig_target }} -Doptimize=ReleaseSafe --summary all
+            arch -x86_64 zig-out/bin/minimux --json system.health
+          else
+            zig build -Doptimize=ReleaseSafe --summary all
+            zig build test --summary all
+          fi
       - name: Package
         shell: bash
         run: |
