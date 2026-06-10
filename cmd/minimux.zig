@@ -1020,9 +1020,15 @@ fn sendControlRequest(
 
     var stream_read_buffer: [65536]u8 = undefined;
     var stream_reader = stream.reader(io, &stream_read_buffer);
-    const response = (try stream_reader.interface.takeDelimiter('\n')) orelse return error.DaemonNotRunning;
-    return allocator.dupe(u8, response);
+    const response = (try minimux.proto.readJsonLine(
+        allocator,
+        &stream_reader.interface,
+        max_control_response_bytes,
+    )) orelse return error.DaemonNotRunning;
+    return response;
 }
+
+const max_control_response_bytes: usize = 64 * 1024 * 1024;
 
 pub fn writeRpcError(writer: *Io.Writer, seq: u64, code: []const u8, detail: []const u8) !void {
     try writer.writeAll("{\"jsonrpc\":\"2.0\",\"ok\":false,\"error\":{\"code\":");

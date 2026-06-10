@@ -370,6 +370,39 @@ fn validateFixtureEvents(events: []const FixtureEvent) FixtureValidationError!vo
     }
 }
 
+/// Reads one newline-delimited message of arbitrary length, growing as
+/// needed up to `max_bytes`. Control-plane messages are single-line JSON;
+/// fixed reader buffers cap a line at the buffer size, which a large pane
+/// snapshot or a pane.send --stdin payload can exceed. Returns the line
+/// without its newline, null on end-of-stream with no data, and
+/// error.StreamTooLong past `max_bytes`. Blocks only while the peer has not
+/// yet delivered the delimiter, so it is safe on a socket whose peer keeps
+/// the connection open after sending one line.
+pub fn readJsonLine(
+    allocator: std.mem.Allocator,
+    reader: *Io.Reader,
+    max_bytes: usize,
+) !?[]u8 {
+    var out: Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    _ = reader.streamDelimiterLimit(&out.writer, '\n', .limited(max_bytes)) catch |err| switch (err) {
+        error.StreamTooLong => return error.StreamTooLong,
+        error.ReadFailed => return error.ReadFailed,
+        error.WriteFailed => return error.OutOfMemory,
+    };
+    const found_delimiter = blk: {
+        const byte = reader.peekByte() catch |err| switch (err) {
+            error.EndOfStream => break :blk false,
+            else => |e| return e,
+        };
+        break :blk byte == '\n';
+    };
+    if (found_delimiter) reader.toss(1);
+    const line = out.written();
+    if (line.len == 0 and !found_delimiter) return null;
+    return try allocator.dupe(u8, line);
+}
+
 pub fn writeJsonString(writer: *Io.Writer, value: []const u8) !void {
     try writer.writeAll("\"");
     for (value) |byte| {
@@ -398,6 +431,39 @@ pub fn writeStringArray(writer: *Io.Writer, values: []const []const u8) !void {
         try writeJsonString(writer, value);
     }
     try writer.writeAll("]");
+}
+
+test "json line reader grows past fixed buffer sizes" {
+    const allocator = std.testing.allocator;
+    const payload_len = 200 * 1024;
+    const stream = try allocator.alloc(u8, payload_len + 9);
+    defer allocator.free(stream);
+    @memset(stream[0..payload_len], 'x');
+    stream[payload_len] = '\n';
+    @memcpy(stream[payload_len + 1 ..], "trailing");
+
+    var reader = Io.Reader.fixed(stream);
+    const line = (try readJsonLine(allocator, &reader, 64 * 1024 * 1024)) orelse return error.MissingLine;
+    defer allocator.free(line);
+    try std.testing.expectEqual(payload_len, line.len);
+    try std.testing.expect(std.mem.indexOfScalar(u8, line, '\n') == null);
+}
+
+test "json line reader reports empty stream and enforces the cap" {
+    const allocator = std.testing.allocator;
+    var empty = Io.Reader.fixed("");
+    try std.testing.expectEqual(@as(?[]u8, null), try readJsonLine(allocator, &empty, 1024));
+
+    var unterminated = Io.Reader.fixed("no newline yet");
+    const partial = (try readJsonLine(allocator, &unterminated, 1024)) orelse return error.MissingLine;
+    defer allocator.free(partial);
+    try std.testing.expectEqualStrings("no newline yet", partial);
+
+    const oversized = try allocator.alloc(u8, 64 * 1024);
+    defer allocator.free(oversized);
+    @memset(oversized, 'y');
+    var capped = Io.Reader.fixed(oversized);
+    try std.testing.expectError(error.StreamTooLong, readJsonLine(allocator, &capped, 32 * 1024));
 }
 
 test "json strings escape control bytes" {

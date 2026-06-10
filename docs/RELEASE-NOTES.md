@@ -1,6 +1,26 @@
 # Release Notes
 
-## v0.1.0 (pending tag)
+## v0.1.1
+
+Control-plane robustness patch. Both fixes came out of driving a real
+interactive workload (npm's browser-auth publish flow) inside minimux panes.
+
+- The daemon now contains per-request failures. A client that disconnects
+  mid-response, sends malformed JSON, or overflows the request cap costs
+  itself that response; previously the error escaped the control loop,
+  killed the daemon, and took its panes down with it. Failures are logged
+  to the session `daemon.log`.
+- Control framing is growable instead of buffer-bound. Large pane
+  snapshots (a filled 220x50 pane is ~1 MB of JSON) no longer fail the CLI
+  with `StreamTooLong` at 64 KB, and `pane.send --stdin` payloads no longer
+  overflow the daemon's 8 KB request buffer. Caps: 4 MB per request, 64 MB
+  per response.
+- New holdout `scripts/holdout/s014_control_plane_robustness.sh` pins both
+  behaviors and runs in the release gate and CI.
+
+Validation and platform matrix are unchanged from v0.1.0 below.
+
+## v0.1.0 (2026-06-10)
 
 minimux v0.1.0 is the daemon substrate for agent-owned PTY sessions: one
 daemon per managed session, daemon-owned PTY supervision, a local JSON-RPC

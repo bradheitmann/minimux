@@ -1,6 +1,6 @@
 .{
     .name = .minimux,
-    .version = "0.1.0",
+    .version = "0.1.1",
     .fingerprint = 0x7443f1a2ffe65258, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .dependencies = .{},

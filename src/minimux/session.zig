@@ -508,6 +508,16 @@ pub fn markControlSocketReady(
     try appendSessionFile(allocator, io, state_dir, name, "daemon.log", "control socket listening\n");
 }
 
+pub fn appendDaemonLog(
+    allocator: Allocator,
+    io: Io,
+    state_dir: []const u8,
+    name: []const u8,
+    line: []const u8,
+) !void {
+    try appendSessionFile(allocator, io, state_dir, name, "daemon.log", line);
+}
+
 pub fn takeTerminateRequest(
     allocator: Allocator,
     io: Io,

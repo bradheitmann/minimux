@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const version = "0.1.0";
+pub const version = "0.1.1";
 pub const product_name = "minimux";
 pub const status = "prototype";
 pub const zig_minimum_version = "0.16.0";

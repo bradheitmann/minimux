@@ -32,7 +32,7 @@ journal sequence.
 | recovery | `test/recovery_engine_test.zig`, `test/prototype_recovery_test.zig`, and `scripts/holdout/s006_recovery_faults.sh` | atomic snapshot and degraded recovery states |
 | fuzz | `zig build fuzz-transport --summary all` | encrypted frame parser rejects invalid frames without plaintext fallback |
 | security | release secret scan plus `docs/SECURITY.md` checks | hardcoded credential patterns, file modes, remote transport constraints |
-| holdout | `scripts/holdout/s002_killshot_recovery.sh`, `scripts/holdout/s008_record_tap_wait.sh`, `scripts/holdout/s011_docs_first_contact.sh`, `scripts/holdout/s012_concurrent_failure_isolation.sh`, `scripts/holdout/s013_repeated_observe_recovery_stress.sh` | encounter-level behavior beyond unit assertions |
+| holdout | `scripts/holdout/s002_killshot_recovery.sh`, `scripts/holdout/s008_record_tap_wait.sh`, `scripts/holdout/s011_docs_first_contact.sh`, `scripts/holdout/s012_concurrent_failure_isolation.sh`, `scripts/holdout/s013_repeated_observe_recovery_stress.sh`, `scripts/holdout/s014_control_plane_robustness.sh` | encounter-level behavior beyond unit assertions |
 | stress | `scripts/holdout/s012_concurrent_failure_isolation.sh` and `scripts/holdout/s013_repeated_observe_recovery_stress.sh` | live sessions maintain independent daemon failure boundaries; repeated pane send, snapshot, record, tap, kill, and recover cycles stay ordered and recoverable |
 
 ## CI Rejections
@@ -59,7 +59,7 @@ true:
 | -- | -- | -- |
 | P1: terminal state, scrollback, and audit trail vanish after an agent crash | `scripts/holdout/s002_killshot_recovery.sh`, `scripts/holdout/s012_concurrent_failure_isolation.sh`, `scripts/holdout/s013_repeated_observe_recovery_stress.sh`, `test/prototype_recovery_test.zig`, `test/recovery_engine_test.zig` | recovered snapshot includes `SESSION_RECOVERED`; degraded state is explicit; independent and repeated sessions recover without cross-contamination |
 | P2: existing PTY layers bake in the substrate underneath them | `test/custom_pane_backend_test.zig`, adapter tests in `zig build -Dtest-filter=adapter test`, `docs/adapters.md` | baremetal and Docker placement remain descriptors; minimux does not own isolation |
-| P3: orchestrators inherit human-multiplexer brittleness from tmux-shaped backends | `scripts/holdout/s008_record_tap_wait.sh`, `scripts/holdout/s011_docs_first_contact.sh`, `docs/API.md` | agents can drive JSON and snapshots without human terminal UI |
+| P3: orchestrators inherit human-multiplexer brittleness from tmux-shaped backends | `scripts/holdout/s008_record_tap_wait.sh`, `scripts/holdout/s011_docs_first_contact.sh`, `scripts/holdout/s014_control_plane_robustness.sh`, `docs/API.md` | agents can drive JSON and snapshots without human terminal UI; a misbehaving client cannot kill the daemon or its panes |
 
 ## Release Checklist
 
@@ -71,6 +71,9 @@ true:
   sessions can be killed and recovered independently.
 - [ ] `scripts/holdout/s013_repeated_observe_recovery_stress.sh` proves
   repeated pane send, snapshot, record, tap, kill, and recover cycles.
+- [ ] `scripts/holdout/s014_control_plane_robustness.sh` proves oversized
+  snapshots round-trip and that client disconnects or oversized requests
+  cannot kill the daemon.
 - [ ] Secret scan failures are zero outside documented allowlist paths.
 - [ ] Public hygiene scan failures are zero.
 - [ ] Module 2 scope scan failures are zero outside boundary declarations.

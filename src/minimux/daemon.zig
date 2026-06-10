@@ -16,6 +16,7 @@ const wait_idle_step_ms: u64 = 25;
 const wait_idle_quiet_window_ms: u64 = 150;
 const wait_idle_max_drained_commands: usize = 32;
 const wait_idle_drain_limit_bytes: usize = 256 * 1024;
+const max_control_request_bytes: usize = 4 * 1024 * 1024;
 
 const ControlParams = struct {
     session: []const u8 = "",
@@ -168,7 +169,11 @@ pub fn runPrototypeLoop(
 
     while (true) {
         refreshChildExitStatus(&child, &shell_process_state, &shell_exit_code);
-        if (try acceptControlRequest(
+        // A failed request must never kill the daemon: a client that
+        // disconnects mid-response (broken pipe), sends malformed JSON, or
+        // overflows the request cap costs that client its response, not the
+        // session its panes. The failure is logged and the loop continues.
+        const control_outcome = acceptControlRequest(
             allocator,
             io,
             &control_server,
@@ -184,17 +189,44 @@ pub fn runPrototypeLoop(
             &active_taps,
             &next_recording_index,
             &next_tap_index,
-        )) |terminate| {
+        ) catch |err| blk: {
+            logDaemonError(allocator, io, state_dir, name, "control request", err);
+            break :blk null;
+        };
+        if (control_outcome) |terminate| {
             if (terminate) break;
         }
-        if (try session.takeTerminateRequest(allocator, io, state_dir, name)) break;
-        if (try session.takePendingCommand(allocator, io, state_dir, name)) |queued| {
+        const terminate_requested = session.takeTerminateRequest(allocator, io, state_dir, name) catch |err| blk: {
+            logDaemonError(allocator, io, state_dir, name, "terminate request check", err);
+            break :blk false;
+        };
+        if (terminate_requested) break;
+        const pending = session.takePendingCommand(allocator, io, state_dir, name) catch |err| blk: {
+            logDaemonError(allocator, io, state_dir, name, "pending command pickup", err);
+            break :blk null;
+        };
+        if (pending) |queued| {
             defer queued.deinit(allocator);
-            try executeQueuedCommand(allocator, io, session_pty.master, stdout, state_dir, name, queued);
+            executeQueuedCommand(allocator, io, session_pty.master, stdout, state_dir, name, queued) catch |err| {
+                logDaemonError(allocator, io, state_dir, name, "queued command execution", err);
+            };
         }
         pumpAllRuntimePanes(allocator, io, state_dir, name, &runtime_panes, &active_recordings);
         Io.sleep(io, .fromMilliseconds(250), .awake) catch {};
     }
+}
+
+fn logDaemonError(
+    allocator: Allocator,
+    io: Io,
+    state_dir: []const u8,
+    name: []const u8,
+    context: []const u8,
+    err: anyerror,
+) void {
+    const line = std.fmt.allocPrint(allocator, "{s} failed: {s}\n", .{ context, @errorName(err) }) catch return;
+    defer allocator.free(line);
+    session.appendDaemonLog(allocator, io, state_dir, name, line) catch {};
 }
 
 /// Drains background output from every runtime pane once per control tick so
@@ -246,7 +278,12 @@ fn acceptControlRequest(
 
     var request_buffer: [8192]u8 = undefined;
     var stream_reader = stream.reader(io, &request_buffer);
-    const request_text = (try stream_reader.interface.takeDelimiter('\n')) orelse return null;
+    const request_text = (try proto.readJsonLine(
+        allocator,
+        &stream_reader.interface,
+        max_control_request_bytes,
+    )) orelse return null;
+    defer allocator.free(request_text);
     var parsed = try std.json.parseFromSlice(ControlRequest, allocator, request_text, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     const request = parsed.value;

@@ -204,7 +204,7 @@ check_release_checklist() {
 check_release_evidence() {
   local log="$EVIDENCE_DIR/checks/release-evidence.log"
   : >"$log"
-  for required in build test c-smoke fuzz-transport holdout-s002 holdout-s006 holdout-s008 holdout-s011 holdout-s012 holdout-s013 docs-prototype; do
+  for required in build test c-smoke fuzz-transport holdout-s002 holdout-s006 holdout-s008 holdout-s011 holdout-s012 holdout-s013 holdout-s014 docs-prototype; do
     if [ ! -f "$EVIDENCE_DIR/commands/$required.log" ]; then
       printf 'missing_command_evidence %s\n' "$required" >>"$log"
     fi
@@ -231,6 +231,7 @@ run_gate holdout-s008 bash scripts/holdout/s008_record_tap_wait.sh
 run_gate holdout-s011 bash scripts/holdout/s011_docs_first_contact.sh
 run_gate holdout-s012 bash scripts/holdout/s012_concurrent_failure_isolation.sh
 run_gate holdout-s013 bash scripts/holdout/s013_repeated_observe_recovery_stress.sh
+run_gate holdout-s014 bash scripts/holdout/s014_control_plane_robustness.sh
 run_gate docs-prototype bash examples/prototype.sh --check
 
 check_secret_scan
@@ -241,7 +242,9 @@ check_sleep_discipline
 check_release_checklist
 check_release_evidence
 
+command_count="$(find "$EVIDENCE_DIR/commands" -name '*.log' | wc -l | tr -d ' ')"
 jq -n \
   --arg evidence_dir "$EVIDENCE_DIR" \
-  '{ ok: true, evidence_dir: $evidence_dir, commands: 11, checks: 7 }' \
+  --argjson commands "$command_count" \
+  '{ ok: true, evidence_dir: $evidence_dir, commands: $commands, checks: 7 }' \
   | tee "$EVIDENCE_DIR/Summary.json"
