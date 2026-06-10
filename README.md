@@ -114,3 +114,10 @@ zig build c-smoke --summary all
 zig build fuzz-transport --summary all
 bash examples/prototype.sh --check
 ```
+
+## License
+
+minimux is licensed under the [Apache License, Version 2.0](LICENSE). The
+Apache-2.0 patent grant is intentional: minimux is control-surface
+infrastructure, and downstream orchestrators need patent safety alongside
+copyright permission.
