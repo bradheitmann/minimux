@@ -114,6 +114,18 @@ pub fn unknown(timeout_ms: u64, reason: []const u8, action: []const u8) Observat
     };
 }
 
+pub fn timedOut(timeout_ms: u64) Observation {
+    return .{
+        .state = .timeout,
+        .idle = false,
+        .exit_code = null,
+        .timeout_ms = timeout_ms,
+        .reason = "timeout expired before the harness observed an idle terminal",
+        .action = "retry with a larger --timeout-ms or inspect the pane snapshot",
+        .retryable = true,
+    };
+}
+
 pub fn exited(timeout_ms: u64, reason: []const u8, action: []const u8) Observation {
     return .{
         .state = .exited,
@@ -188,4 +200,10 @@ test "shell harness maps process states to actionable observations" {
     const unclear = observe(.unknown, null, 5000);
     try std.testing.expectEqual(State.unknown, unclear.state);
     try std.testing.expect(std.mem.indexOf(u8, unclear.action, "snapshot") != null);
+
+    const expired = timedOut(750);
+    try std.testing.expectEqual(State.timeout, expired.state);
+    try std.testing.expect(expired.retryable);
+    try std.testing.expectEqual(@as(u64, 750), expired.timeout_ms);
+    try std.testing.expectEqualStrings("error.WaitIdleTimeout", expired.errorCode());
 }

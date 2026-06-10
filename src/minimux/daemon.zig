@@ -1,4 +1,5 @@
 const std = @import("std");
+const domain = @import("domain.zig");
 const proto = @import("proto.zig");
 const pty = @import("pty.zig");
 const session = @import("session.zig");
@@ -10,6 +11,11 @@ const observe = @import("observe.zig");
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 const net = std.Io.net;
+
+const wait_idle_step_ms: u64 = 25;
+const wait_idle_quiet_window_ms: u64 = 150;
+const wait_idle_max_drained_commands: usize = 32;
+const wait_idle_drain_limit_bytes: usize = 256 * 1024;
 
 const ControlParams = struct {
     session: []const u8 = "",
@@ -264,13 +270,27 @@ fn acceptControlRequest(
                     "list panes or create the pane before waiting for idle",
                 );
             };
-            const runtime = &runtime_panes.items[pane_index];
-            refreshRuntimePaneExitStatus(runtime);
-            break :blk harness_shell.observe(toHarnessProcessState(runtime.process_state), runtime.last_exit_code, request.params.timeout_ms);
-        } else blk: {
-            refreshChildExitStatus(shell_child, shell_process_state, shell_exit_code);
-            break :blk harness_shell.observe(toHarnessProcessState(shell_process_state.*), shell_exit_code.*, request.params.timeout_ms);
-        };
+            break :blk try waitForPaneIdle(
+                allocator,
+                io,
+                state_dir,
+                name,
+                &runtime_panes.items[pane_index],
+                active_recordings,
+                request.params.timeout_ms,
+            );
+        } else try waitForShellIdle(
+            allocator,
+            io,
+            session_master,
+            stdout,
+            state_dir,
+            name,
+            shell_child,
+            shell_process_state,
+            shell_exit_code,
+            request.params.timeout_ms,
+        );
         try harness_shell.writeObservationJson(writer, name, observation, "control-socket", request.id);
         try writer.flush();
         return false;
@@ -353,14 +373,25 @@ fn acceptControlRequest(
     }
 
     if (std.mem.eql(u8, request.method, "pane.create")) {
+        var extra_parsed = try std.json.parseFromSlice(std.json.Value, allocator, request_text, .{});
+        defer extra_parsed.deinit();
+        const extra = try parsePaneCreateExtra(allocator, extra_parsed.value);
+        defer extra.deinit(allocator);
+
         const command = std.mem.trim(u8, request.params.command, " \r\n\t");
-        if (command.len == 0) {
+        if (command.len == 0 and extra.argv.len == 0) {
             try writeControlError(writer, request.id, "error.InvalidPaneCommand", "pane.create");
             try writer.flush();
             return false;
         }
-        const dimensions = controlDimensions(request.params);
-        const pane_info = session.createPane(allocator, io, state_dir, name, command, dimensions) catch |err| switch (err) {
+        const dimensions = extra.size orelse controlDimensions(request.params);
+        const display_command = if (command.len > 0)
+            try allocator.dupe(u8, command)
+        else
+            try std.mem.join(allocator, " ", extra.argv);
+        defer allocator.free(display_command);
+
+        const pane_info = session.createPane(allocator, io, state_dir, name, display_command, dimensions) catch |err| switch (err) {
             error.FileNotFound => {
                 try writeControlError(writer, request.id, "error.SessionNotFound", name);
                 try writer.flush();
@@ -382,13 +413,32 @@ fn acceptControlRequest(
 
         var pane_pty = try pty.open(dimensions);
         errdefer pane_pty.close(io);
-        const child_argv = [_][]const u8{ "sh", "-lc", command };
-        var pane_child = try std.process.spawn(io, .{
-            .argv = &child_argv,
+
+        var env_map: ?std.process.Environ.Map = null;
+        defer if (env_map) |*map| map.deinit();
+        if (extra.env_keys.len > 0) {
+            env_map = std.process.Environ.Map.init(allocator);
+            for (extra.env_keys, extra.env_values) |key, value| try env_map.?.put(key, value);
+        }
+        const environ_ptr: ?*const std.process.Environ.Map = if (env_map) |*map| map else null;
+
+        const fallback_argv = [_][]const u8{ "sh", "-lc", command };
+        const spawn_argv: []const []const u8 = if (extra.argv.len > 0) extra.argv else &fallback_argv;
+        var pane_child = std.process.spawn(io, .{
+            .argv = spawn_argv,
+            .cwd = if (extra.cwd.len > 0) .{ .path = extra.cwd } else .inherit,
+            .environ_map = environ_ptr,
             .stdin = .{ .file = pane_pty.slave },
             .stdout = .{ .file = pane_pty.slave },
             .stderr = .{ .file = pane_pty.slave },
-        });
+        }) catch |err| {
+            pane_pty.close(io);
+            const closed: ?session.PaneInfo = session.closePane(allocator, io, state_dir, name, pane_info.local_id) catch null;
+            if (closed) |info| info.deinit(allocator);
+            try writeControlError(writer, request.id, "error.PaneSpawnFailed", @errorName(err));
+            try writer.flush();
+            return false;
+        };
         pane_pty.closeSlave(io);
         errdefer forceKillChild(&pane_child, io);
 
@@ -569,11 +619,191 @@ fn acceptControlRequest(
     return false;
 }
 
-fn controlDimensions(params: ControlParams) @import("domain.zig").Dimensions {
+fn controlDimensions(params: ControlParams) domain.Dimensions {
     return .{
         .cols = if (params.cols == 0) 80 else params.cols,
         .rows = if (params.rows == 0) 24 else params.rows,
     };
+}
+
+const PaneCreateExtra = struct {
+    argv: []const []const u8,
+    env_keys: []const []const u8,
+    env_values: []const []const u8,
+    cwd: []const u8,
+    size: ?domain.Dimensions,
+
+    fn deinit(extra: PaneCreateExtra, allocator: Allocator) void {
+        allocator.free(extra.argv);
+        allocator.free(extra.env_keys);
+        allocator.free(extra.env_values);
+    }
+};
+
+/// Extracts the spec-shaped pane.create parameters (argv, env, cwd, size) from
+/// the raw request. String slices borrow from the parsed JSON value, so the
+/// parsed value must outlive the returned struct.
+fn parsePaneCreateExtra(allocator: Allocator, root: std.json.Value) !PaneCreateExtra {
+    var argv: std.ArrayList([]const u8) = .empty;
+    errdefer argv.deinit(allocator);
+    var env_keys: std.ArrayList([]const u8) = .empty;
+    errdefer env_keys.deinit(allocator);
+    var env_values: std.ArrayList([]const u8) = .empty;
+    errdefer env_values.deinit(allocator);
+    var cwd: []const u8 = "";
+    var size: ?domain.Dimensions = null;
+
+    params: {
+        if (root != .object) break :params;
+        const params_value = root.object.get("params") orelse break :params;
+        if (params_value != .object) break :params;
+        const params = params_value.object;
+
+        if (params.get("argv")) |argv_value| {
+            if (argv_value == .array) {
+                for (argv_value.array.items) |item| {
+                    if (item == .string) try argv.append(allocator, item.string);
+                }
+            }
+        }
+        if (params.get("env")) |env_value| {
+            if (env_value == .object) {
+                var iterator = env_value.object.iterator();
+                while (iterator.next()) |entry| {
+                    if (entry.value_ptr.* == .string) {
+                        try env_keys.append(allocator, entry.key_ptr.*);
+                        try env_values.append(allocator, entry.value_ptr.*.string);
+                    }
+                }
+            }
+        }
+        if (params.get("cwd")) |cwd_value| {
+            if (cwd_value == .string) cwd = cwd_value.string;
+        }
+        if (params.get("size")) |size_value| {
+            if (size_value == .object) {
+                const cols = dimensionFromValue(size_value.object.get("cols"));
+                const rows = dimensionFromValue(size_value.object.get("rows"));
+                if (cols != null and rows != null) size = .{ .cols = cols.?, .rows = rows.? };
+            }
+        }
+    }
+
+    return .{
+        .argv = try argv.toOwnedSlice(allocator),
+        .env_keys = try env_keys.toOwnedSlice(allocator),
+        .env_values = try env_values.toOwnedSlice(allocator),
+        .cwd = cwd,
+        .size = size,
+    };
+}
+
+fn dimensionFromValue(value: ?std.json.Value) ?u16 {
+    const dimension = value orelse return null;
+    return switch (dimension) {
+        .integer => |raw| if (raw > 0 and raw <= std.math.maxInt(u16)) @intCast(raw) else null,
+        else => null,
+    };
+}
+
+/// Waits until the managed shell is idle: the child is running and the queued
+/// command channel is drained. Queued commands are executed here because the
+/// control loop is single-threaded and cannot drain them while this request is
+/// being served.
+fn waitForShellIdle(
+    allocator: Allocator,
+    io: Io,
+    session_master: Io.File,
+    stdout: *Io.Reader,
+    state_dir: []const u8,
+    name: []const u8,
+    shell_child: *std.process.Child,
+    shell_process_state: *RuntimeProcessState,
+    shell_exit_code: *?u8,
+    timeout_ms: u64,
+) !harness_shell.Observation {
+    if (timeout_ms == 0) {
+        refreshChildExitStatus(shell_child, shell_process_state, shell_exit_code);
+        return harness_shell.observe(toHarnessProcessState(shell_process_state.*), shell_exit_code.*, 0);
+    }
+    var executed: usize = 0;
+    while (true) {
+        refreshChildExitStatus(shell_child, shell_process_state, shell_exit_code);
+        if (shell_process_state.* != .running) {
+            return harness_shell.observe(toHarnessProcessState(shell_process_state.*), shell_exit_code.*, timeout_ms);
+        }
+        if (!(try session.hasPendingCommand(allocator, io, state_dir, name))) {
+            return harness_shell.observe(.running, null, timeout_ms);
+        }
+        if (executed >= wait_idle_max_drained_commands) return harness_shell.timedOut(timeout_ms);
+        if (try session.takePendingCommand(allocator, io, state_dir, name)) |queued| {
+            defer queued.deinit(allocator);
+            try executeQueuedCommand(allocator, io, session_master, stdout, state_dir, name, queued);
+            executed += 1;
+        }
+    }
+}
+
+/// Waits until a runtime pane is output-quiescent: the child is running and no
+/// PTY output arrived for `wait_idle_quiet_window_ms`. Drained output feeds the
+/// shadow VT engine, taps, and recordings so observation does not lose bytes.
+fn waitForPaneIdle(
+    allocator: Allocator,
+    io: Io,
+    state_dir: []const u8,
+    name: []const u8,
+    runtime: *RuntimePane,
+    active_recordings: *std.ArrayList(observe.ActiveRecording),
+    timeout_ms: u64,
+) !harness_shell.Observation {
+    if (timeout_ms == 0) {
+        refreshRuntimePaneExitStatus(runtime);
+        return harness_shell.observe(toHarnessProcessState(runtime.process_state), runtime.last_exit_code, 0);
+    }
+    var remaining = timeout_ms;
+    var quiet_ms: u64 = 0;
+    while (true) {
+        refreshRuntimePaneExitStatus(runtime);
+        if (runtime.process_state != .running) {
+            return harness_shell.observe(toHarnessProcessState(runtime.process_state), runtime.last_exit_code, timeout_ms);
+        }
+        const drained = pumpRuntimePaneOutput(allocator, io, state_dir, name, runtime, active_recordings) catch |err| switch (err) {
+            error.NoSpaceLeft => return harness_shell.unknown(
+                timeout_ms,
+                "a recording rejected drained pane output because the disk is full",
+                "stop the recording or free disk space, then retry wait-idle",
+            ),
+            else => |e| return e,
+        };
+        if (drained > 0) {
+            quiet_ms = 0;
+        } else if (quiet_ms >= wait_idle_quiet_window_ms) {
+            return harness_shell.observe(.running, null, timeout_ms);
+        }
+        if (remaining == 0) return harness_shell.timedOut(timeout_ms);
+        const step = @min(remaining, wait_idle_step_ms);
+        Io.sleep(io, .fromMilliseconds(@intCast(step)), .awake) catch {};
+        remaining -= step;
+        quiet_ms += step;
+    }
+}
+
+/// Drains any immediately-available pane output into the shadow VT engine,
+/// taps, and recordings. Returns the number of drained bytes.
+fn pumpRuntimePaneOutput(
+    allocator: Allocator,
+    io: Io,
+    state_dir: []const u8,
+    name: []const u8,
+    runtime: *RuntimePane,
+    active_recordings: *std.ArrayList(observe.ActiveRecording),
+) !usize {
+    const output = try pty.drainOutput(allocator, runtime.pty.master, 0, 0, wait_idle_drain_limit_bytes);
+    defer allocator.free(output);
+    if (output.len == 0) return 0;
+    try runtime.shadow.feed(allocator, output);
+    _ = try observe.appendOutputEvent(allocator, io, state_dir, name, runtime.local_id, output, active_recordings);
+    return output.len;
 }
 
 fn findRuntimePaneIndex(runtime_panes: *std.ArrayList(RuntimePane), local_id: []const u8) ?usize {
@@ -726,6 +956,121 @@ fn runPaneByteInput(
         .stdout = output,
         .exit_code = 0,
     };
+}
+
+test "pane create extra parses spec-shaped argv env cwd and size" {
+    const allocator = std.testing.allocator;
+    const request_text =
+        \\{"jsonrpc":"2.0","id":9,"method":"pane.create","params":{"session":"x","argv":["sh","-c","echo hi"],"env":{"FOO":"bar","BAZ":"qux"},"cwd":"/tmp","size":{"cols":100,"rows":31}}}
+    ;
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, request_text, .{});
+    defer parsed.deinit();
+    const extra = try parsePaneCreateExtra(allocator, parsed.value);
+    defer extra.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 3), extra.argv.len);
+    try std.testing.expectEqualStrings("sh", extra.argv[0]);
+    try std.testing.expectEqualStrings("echo hi", extra.argv[2]);
+    try std.testing.expectEqual(@as(usize, 2), extra.env_keys.len);
+    try std.testing.expectEqual(@as(usize, 2), extra.env_values.len);
+    try std.testing.expectEqualStrings("/tmp", extra.cwd);
+    try std.testing.expectEqual(@as(u16, 100), extra.size.?.cols);
+    try std.testing.expectEqual(@as(u16, 31), extra.size.?.rows);
+
+    var empty_parsed = try std.json.parseFromSlice(std.json.Value, allocator, "{\"method\":\"pane.create\"}", .{});
+    defer empty_parsed.deinit();
+    const empty = try parsePaneCreateExtra(allocator, empty_parsed.value);
+    defer empty.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 0), empty.argv.len);
+    try std.testing.expectEqual(@as(usize, 0), empty.env_keys.len);
+    try std.testing.expectEqual(@as(usize, 0), empty.cwd.len);
+    try std.testing.expect(empty.size == null);
+}
+
+test "wait for pane idle reports quiescent exited and timeout states" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const state_dir = ".zig-cache/minimux-wait-pane-idle-test";
+    Io.Dir.cwd().deleteTree(io, state_dir) catch {};
+    defer Io.Dir.cwd().deleteTree(io, state_dir) catch {};
+    try Io.Dir.cwd().createDirPath(io, state_dir ++ "/sessions/wait-pane");
+
+    var recordings: std.ArrayList(observe.ActiveRecording) = .empty;
+    defer {
+        for (recordings.items) |recording| recording.deinit(allocator);
+        recordings.deinit(allocator);
+    }
+
+    var quiet_pty = try pty.open(.{});
+    const quiet_argv = [_][]const u8{"cat"};
+    const quiet_child = try std.process.spawn(io, .{
+        .argv = &quiet_argv,
+        .stdin = .{ .file = quiet_pty.slave },
+        .stdout = .{ .file = quiet_pty.slave },
+        .stderr = .{ .file = quiet_pty.slave },
+    });
+    quiet_pty.closeSlave(io);
+    var quiet_pane: RuntimePane = .{
+        .local_id = try allocator.dupe(u8, "pane-quiet"),
+        .pty = quiet_pty,
+        .child = quiet_child,
+        .shadow = try shadow.Engine.init(allocator, .{}),
+    };
+    defer quiet_pane.deinit(allocator, io);
+
+    const zero_budget = try waitForPaneIdle(allocator, io, state_dir, "wait-pane", &quiet_pane, &recordings, 0);
+    try std.testing.expectEqual(harness_shell.State.timeout, zero_budget.state);
+
+    const idle = try waitForPaneIdle(allocator, io, state_dir, "wait-pane", &quiet_pane, &recordings, 2000);
+    try std.testing.expectEqual(harness_shell.State.idle, idle.state);
+    try std.testing.expect(idle.idle);
+
+    var chatter_pty = try pty.open(.{});
+    const chatter_argv = [_][]const u8{ "sh", "-c", "while true; do echo chatter; sleep 0.05; done" };
+    const chatter_child = try std.process.spawn(io, .{
+        .argv = &chatter_argv,
+        .stdin = .{ .file = chatter_pty.slave },
+        .stdout = .{ .file = chatter_pty.slave },
+        .stderr = .{ .file = chatter_pty.slave },
+    });
+    chatter_pty.closeSlave(io);
+    var chatter_pane: RuntimePane = .{
+        .local_id = try allocator.dupe(u8, "pane-chatter"),
+        .pty = chatter_pty,
+        .child = chatter_child,
+        .shadow = try shadow.Engine.init(allocator, .{}),
+    };
+    defer chatter_pane.deinit(allocator, io);
+
+    const expired = try waitForPaneIdle(allocator, io, state_dir, "wait-pane", &chatter_pane, &recordings, 500);
+    try std.testing.expectEqual(harness_shell.State.timeout, expired.state);
+    try std.testing.expect(expired.retryable);
+    try std.testing.expect(chatter_pane.shadow.nonBlankCellCount() > 0);
+
+    var exit_pty = try pty.open(.{});
+    const exit_argv = [_][]const u8{ "sh", "-c", "exit 7" };
+    const exit_child = try std.process.spawn(io, .{
+        .argv = &exit_argv,
+        .stdin = .{ .file = exit_pty.slave },
+        .stdout = .{ .file = exit_pty.slave },
+        .stderr = .{ .file = exit_pty.slave },
+    });
+    exit_pty.closeSlave(io);
+    var exit_pane: RuntimePane = .{
+        .local_id = try allocator.dupe(u8, "pane-exit"),
+        .pty = exit_pty,
+        .child = exit_child,
+        .shadow = try shadow.Engine.init(allocator, .{}),
+    };
+    defer exit_pane.deinit(allocator, io);
+
+    var attempts: usize = 0;
+    while (attempts < 200 and exit_pane.process_state == .running) : (attempts += 1) {
+        refreshRuntimePaneExitStatus(&exit_pane);
+        if (exit_pane.process_state == .running) try Io.sleep(io, .fromMilliseconds(10), .awake);
+    }
+    const finished = try waitForPaneIdle(allocator, io, state_dir, "wait-pane", &exit_pane, &recordings, 2000);
+    try std.testing.expectEqual(harness_shell.State.exited, finished.state);
+    try std.testing.expectEqual(@as(?u8, 7), finished.exit_code);
 }
 
 test "runtime process status records exited child code without blocking" {

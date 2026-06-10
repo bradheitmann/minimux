@@ -609,6 +609,21 @@ pub fn enqueueCommandAndWait(
     return error.CommandTimeout;
 }
 
+pub fn hasPendingCommand(
+    allocator: Allocator,
+    io: Io,
+    state_dir: []const u8,
+    name: []const u8,
+) !bool {
+    const target = try sessionPath(allocator, state_dir, name, "pending.cmd");
+    defer allocator.free(target);
+    _ = Io.Dir.cwd().statFile(io, target, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => |e| return e,
+    };
+    return true;
+}
+
 pub fn takePendingCommand(
     allocator: Allocator,
     io: Io,
@@ -1046,6 +1061,28 @@ fn isProcessAlive(allocator: Allocator, io: Io, pid: i64) !bool {
         else => return false,
     }
     return !std.mem.containsAtLeast(u8, result.stdout, 1, "Z");
+}
+
+test "pending command queue is observable without consuming" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const state_dir = ".zig-cache/minimux-pending-peek-test";
+    Io.Dir.cwd().deleteTree(io, state_dir) catch {};
+    defer Io.Dir.cwd().deleteTree(io, state_dir) catch {};
+
+    const argv = [_][]const u8{"bash"};
+    try create(allocator, io, state_dir, "pending-peek", @intCast(std.posix.system.getpid()), &argv);
+    try std.testing.expect(!(try hasPendingCommand(allocator, io, state_dir, "pending-peek")));
+
+    try writeSessionFile(allocator, io, state_dir, "pending-peek", "pending.seq", "1\n");
+    try writeSessionFile(allocator, io, state_dir, "pending-peek", "pending.cmd", "echo queued");
+    try std.testing.expect(try hasPendingCommand(allocator, io, state_dir, "pending-peek"));
+    try std.testing.expect(try hasPendingCommand(allocator, io, state_dir, "pending-peek"));
+
+    const queued = (try takePendingCommand(allocator, io, state_dir, "pending-peek")) orelse return error.MissingQueuedCommand;
+    defer queued.deinit(allocator);
+    try std.testing.expectEqualStrings("echo queued", queued.command);
+    try std.testing.expect(!(try hasPendingCommand(allocator, io, state_dir, "pending-peek")));
 }
 
 test "snapshot marks dead daemon as recovered" {

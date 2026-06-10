@@ -95,21 +95,29 @@ zig-out/bin/minimux terminate mx-api --json
 
 - Purpose: create a pane process inside a running session.
 - Parameters: `session` string; `argv` string array; `env` object; `cwd`
-  string; `size` object with `cols` and `rows`. The CLI currently exposes
-  `--cmd`, `--cols`, and `--rows`.
+  string; `size` object with `cols` and `rows`. When `argv` is present and
+  non-empty the daemon spawns it directly. A legacy `command` string is also
+  accepted and runs through `sh -lc`. The CLI exposes `--cmd`, `--cwd`,
+  repeatable `--env KEY=value`, `--cols`, `--rows`, and a spec-shaped argv
+  after `--`.
+- Environment semantics: when `env` is provided it **replaces** the pane child
+  environment rather than overlaying the daemon environment. Omit `env` to
+  inherit the daemon environment.
 - Return type: `pane` object with `pane_id`, `session`, `local_id`, `state`,
   `command`, `dimensions`, and `input_count`.
 - Errors: `error.MissingSession`, `error.SessionNotFound`,
   `error.DaemonNotRunning`, `error.InvalidPaneCommand`,
-  `error.InvalidPaneDimensions`.
-- Example:
+  `error.InvalidPaneDimensions`, `error.PaneSpawnFailed`.
+- Examples:
 
 ```bash
 zig-out/bin/minimux pane create --session mx-api --cmd sh --cols 80 --rows 24 --json
+zig-out/bin/minimux pane create --session mx-api --cwd /tmp --env KEY=value --json -- sh -c 'echo hi'
 ```
 
 - Edge cases: `MX_SESSION` can supply session context when the pane reference
-  omits a session prefix.
+  omits a session prefix. A `cwd` that does not exist surfaces as
+  `error.PaneSpawnFailed` and the pane is marked closed.
 
 ## `pane.send(pane_id, bytes)`
 
@@ -181,12 +189,22 @@ zig-out/bin/minimux pane close mx-api:pane-1 --json
 
 ## `agent.wait_idle(pane_id, timeout_ms, harness)`
 
-- Purpose: wait until the shell-generic harness reports idle or exited state.
+- Purpose: wait until the shell-generic harness reports idle or exited state,
+  or until `timeout_ms` expires with a retryable typed timeout.
 - Parameters: `pane_id` string; `timeout_ms` unsigned 64-bit integer; `harness`
   object. The CLI exposes `--timeout-ms` and uses `shell-generic`.
+- Wait semantics: for the session shell, idle means the child is running and
+  the queued command channel is drained; queued commands are executed before
+  idle is reported. For a pane, idle means the child is running and no PTY
+  output arrived for a 150 ms quiet window; output drained while waiting feeds
+  the shadow VT engine, taps, and recordings, so `pane.snapshot` reflects it.
+  The shell-generic harness cannot distinguish a silently busy command from an
+  idle prompt; pair `wait_idle` with `pane.snapshot` when that matters.
+- Blocking: the daemon control loop is single-threaded, so a pane wait can hold
+  the control socket for up to `timeout_ms`.
 - Return type: result object with `session`, `state`, `idle`, `timeout_ms`,
   `harness`, optional `exit_code`, and detail object.
-- Errors: `error.WaitIdleTimeout`, `error.WaitIdleUnknown`,
+- Errors: `error.WaitIdleTimeout` (retryable), `error.WaitIdleUnknown`,
   `error.DaemonNotRunning`.
 - Example:
 
@@ -195,7 +213,8 @@ zig-out/bin/minimux agent wait-idle mx-api:pane-1 --timeout-ms 5000 --json
 ```
 
 - Edge cases: `timeout_ms:0` returns a retryable timeout. A terminated session
-  reports exited state instead of accepting more input.
+  reports exited state instead of accepting more input. A pane that keeps
+  producing output for the whole budget returns `error.WaitIdleTimeout`.
 
 ## `record.start(pane_id, path, policy)`
 

@@ -19,6 +19,9 @@ const ControlRequestOptions = struct {
     recording_id: []const u8 = "",
     tap_id: []const u8 = "",
     filter: []const u8 = "",
+    argv: []const []const u8 = &.{},
+    env_pairs: []const []const u8 = &.{},
+    cwd: []const u8 = "",
 };
 
 const ControlTarget = struct {
@@ -182,6 +185,7 @@ fn writeHelp(writer: *Io.Writer) !void {
         \\  minimux attach x --json
         \\  minimux terminate x --json
         \\  minimux pane create --session x --cmd bash --json
+        \\  minimux pane create --session x --cwd /tmp --env KEY=value --json -- sh -c 'echo hi'
         \\  minimux pane send x:pane-1 "echo hi<CR>"
         \\  minimux pane send x:pane-1 --stdin
         \\  minimux pane resize x:pane-1 --cols 100 --rows 30 --json
@@ -695,7 +699,8 @@ fn paneCreate(
     state_dir: []const u8,
     current_session: []const u8,
 ) !void {
-    const session_name = optionValue(args, "--session") orelse current_session;
+    const flag_args = argsBeforeSeparator(args);
+    const session_name = optionValue(flag_args, "--session") orelse current_session;
     if (session_name.len == 0) {
         try writeRpcError(writer, 21, "error.MissingSession", "pane.create");
         return CliError.InvalidArgument;
@@ -704,14 +709,21 @@ fn paneCreate(
         try writeRpcError(writer, 21, errorCode(err), session_name);
         return CliError.InvalidArgument;
     };
-    const command = optionValue(args, "--cmd") orelse "bash";
-    const dimensions = parseDimensions(args) catch |err| {
+    const pane_argv = argvAfterSeparator(args);
+    const command = if (pane_argv.len > 0) "" else optionValue(flag_args, "--cmd") orelse "bash";
+    const env_pairs = try collectOptionValues(allocator, flag_args, "--env");
+    defer allocator.free(env_pairs);
+    const cwd = optionValue(flag_args, "--cwd") orelse "";
+    const dimensions = parseDimensions(flag_args) catch |err| {
         try writeRpcError(writer, 21, errorCode(err), "pane.create");
         return CliError.InvalidArgument;
     };
     const response = sendControlRequest(allocator, io, state_dir, session_name, 21, "pane.create", .{
         .command = command,
         .dimensions = dimensions,
+        .argv = pane_argv,
+        .env_pairs = env_pairs,
+        .cwd = cwd,
     }) catch |err| switch (err) {
         error.FileNotFound => {
             try writeRpcError(writer, 21, "error.SessionNotFound", session_name);
@@ -977,6 +989,28 @@ fn sendControlRequest(
         try request_writer.writeAll(",\"filter\":");
         try minimux.proto.writeJsonString(request_writer, options.filter);
     }
+    if (options.argv.len > 0) {
+        try request_writer.writeAll(",\"argv\":");
+        try minimux.proto.writeStringArray(request_writer, options.argv);
+    }
+    if (options.cwd.len > 0) {
+        try request_writer.writeAll(",\"cwd\":");
+        try minimux.proto.writeJsonString(request_writer, options.cwd);
+    }
+    if (options.env_pairs.len > 0) {
+        try request_writer.writeAll(",\"env\":{");
+        var first_pair = true;
+        for (options.env_pairs) |pair| {
+            const separator = std.mem.indexOfScalar(u8, pair, '=') orelse continue;
+            if (separator == 0) continue;
+            if (!first_pair) try request_writer.writeAll(",");
+            first_pair = false;
+            try minimux.proto.writeJsonString(request_writer, pair[0..separator]);
+            try request_writer.writeAll(":");
+            try minimux.proto.writeJsonString(request_writer, pair[separator + 1 ..]);
+        }
+        try request_writer.writeAll("}");
+    }
     try request_writer.writeAll("}}\n");
 
     var stream_write_buffer: [8192]u8 = undefined;
@@ -1019,6 +1053,35 @@ fn optionValue(args: []const []const u8, name: []const u8) ?[]const u8 {
         if (std.mem.eql(u8, args[index], name)) return args[index + 1];
     }
     return null;
+}
+
+fn collectOptionValues(
+    allocator: std.mem.Allocator,
+    args: []const []const u8,
+    name: []const u8,
+) ![]const []const u8 {
+    var values: std.ArrayList([]const u8) = .empty;
+    errdefer values.deinit(allocator);
+    var index: usize = 0;
+    while (index + 1 < args.len) : (index += 1) {
+        if (std.mem.eql(u8, args[index], "--")) break;
+        if (std.mem.eql(u8, args[index], name)) try values.append(allocator, args[index + 1]);
+    }
+    return values.toOwnedSlice(allocator);
+}
+
+fn argvAfterSeparator(args: []const []const u8) []const []const u8 {
+    for (args, 0..) |arg, index| {
+        if (std.mem.eql(u8, arg, "--")) return args[index + 1 ..];
+    }
+    return &.{};
+}
+
+fn argsBeforeSeparator(args: []const []const u8) []const []const u8 {
+    for (args, 0..) |arg, index| {
+        if (std.mem.eql(u8, arg, "--")) return args[0..index];
+    }
+    return args;
 }
 
 fn hasFlag(args: []const []const u8, name: []const u8) bool {
