@@ -9,6 +9,17 @@ encrypted remote transport, and adapter boundaries.
 The canonical product contract is [SPEC-v2.2.md](SPEC-v2.2.md). The agent path
 starts in [docs/AGENTS.md](docs/AGENTS.md).
 
+## Install
+
+minimux builds from source with Zig 0.16.0 on macOS and Linux. There is no
+package distribution yet; the binary distribution path is a roadmap item.
+
+```bash
+zig build --summary all
+install -m 0755 zig-out/bin/minimux ~/.local/bin/minimux   # or any PATH dir
+minimux --json system.health
+```
+
 ## Build
 
 ```bash
