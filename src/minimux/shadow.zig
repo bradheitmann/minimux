@@ -131,6 +131,9 @@ pub const Engine = struct {
             switch (byte) {
                 '\r' => engine.cursor.x = 0,
                 '\n' => engine.lineFeed(),
+                0x08 => {
+                    if (engine.cursor.x > 0) engine.cursor.x -= 1;
+                },
                 '\t' => {
                     try engine.putByte(' ');
                     try engine.putByte(' ');
@@ -196,6 +199,8 @@ pub const Engine = struct {
             'm' => engine.applySgr(params),
             'H', 'f' => engine.applyCursorPosition(params),
             'J' => engine.applyErase(params),
+            'K' => engine.applyEraseLine(params),
+            'A', 'B', 'C', 'D' => engine.applyCursorMove(final, params),
             'h' => {
                 if (std.mem.eql(u8, params, "?1049")) try engine.enterAlternateScreen(allocator);
             },
@@ -296,6 +301,36 @@ pub const Engine = struct {
         }
     }
 
+    fn applyEraseLine(engine: *Engine, params: []const u8) void {
+        const mode: u8 = if (params.len == 0) 0 else std.fmt.parseInt(u8, params, 10) catch return;
+        const start: u16 = switch (mode) {
+            0 => engine.cursor.x,
+            1, 2 => 0,
+            else => return,
+        };
+        const end: u16 = switch (mode) {
+            0, 2 => engine.dimensions.cols,
+            1 => @min(engine.cursor.x + 1, engine.dimensions.cols),
+            else => return,
+        };
+        var x = start;
+        while (x < end) : (x += 1) {
+            engine.cells[indexOf(engine.dimensions, x, engine.cursor.y)] = .{};
+        }
+    }
+
+    fn applyCursorMove(engine: *Engine, final: u8, params: []const u8) void {
+        const raw: u16 = if (params.len == 0) 1 else std.fmt.parseInt(u16, params, 10) catch return;
+        const count = if (raw == 0) 1 else raw;
+        switch (final) {
+            'A' => engine.cursor.y = if (engine.cursor.y >= count) engine.cursor.y - count else 0,
+            'B' => engine.cursor.y = @min(engine.cursor.y +| count, engine.dimensions.rows - 1),
+            'C' => engine.cursor.x = @min(engine.cursor.x +| count, engine.dimensions.cols - 1),
+            'D' => engine.cursor.x = if (engine.cursor.x >= count) engine.cursor.x - count else 0,
+            else => {},
+        }
+    }
+
     fn enterAlternateScreen(engine: *Engine, allocator: Allocator) !void {
         if (engine.alternate_screen) return;
         const saved = try allocator.alloc(Cell, engine.cells.len);
@@ -379,6 +414,33 @@ test "shadow snapshot tracks color attributes" {
     try std.testing.expectEqual(Color.red, engine.cellAt(0, 0).attrs.fg);
     try std.testing.expect(engine.cellAt(0, 0).attrs.bold);
     try std.testing.expectEqual(Color.default, engine.cellAt(1, 0).attrs.fg);
+}
+
+test "shadow erase line cursor moves and backspace edit prompt redraws" {
+    var engine = try Engine.init(std.testing.allocator, .{ .cols = 12, .rows = 4 });
+    defer engine.deinit(std.testing.allocator);
+
+    try engine.feed(std.testing.allocator, "hello");
+    try engine.feed(std.testing.allocator, "\x1b[3D\x1b[K");
+    var visible = try engine.visibleText(std.testing.allocator);
+    try std.testing.expectEqualStrings("he", visible);
+    std.testing.allocator.free(visible);
+
+    try engine.feed(std.testing.allocator, "\x1b[2K\rab\x08c");
+    visible = try engine.visibleText(std.testing.allocator);
+    try std.testing.expectEqualStrings("ac", visible);
+    std.testing.allocator.free(visible);
+
+    try engine.feed(std.testing.allocator, "\x1b[2B\x1b[3CX");
+    try std.testing.expectEqual(@as(u16, 2), engine.cursor.y);
+    try std.testing.expectEqual(@as(u8, 'X'), engine.cellAt(5, 2).char);
+
+    try engine.feed(std.testing.allocator, "\x1b[A\x1b[4DY");
+    try std.testing.expectEqual(@as(u8, 'Y'), engine.cellAt(2, 1).char);
+
+    try engine.feed(std.testing.allocator, "\x1b[99A\x1b[99D");
+    try std.testing.expectEqual(@as(u16, 0), engine.cursor.y);
+    try std.testing.expectEqual(@as(u16, 0), engine.cursor.x);
 }
 
 test "shadow snapshot restores primary screen after alternate screen" {

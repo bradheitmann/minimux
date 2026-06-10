@@ -192,7 +192,27 @@ pub fn runPrototypeLoop(
             defer queued.deinit(allocator);
             try executeQueuedCommand(allocator, io, session_pty.master, stdout, state_dir, name, queued);
         }
+        pumpAllRuntimePanes(allocator, io, state_dir, name, &runtime_panes, &active_recordings);
         Io.sleep(io, .fromMilliseconds(250), .awake) catch {};
+    }
+}
+
+/// Drains background output from every runtime pane once per control tick so
+/// snapshots, taps, and recordings stay current without a pane.send. Pump
+/// errors must not kill the daemon: a disk-full recording shortfall surfaces
+/// to the next requester that touches the recording, while the shadow VT
+/// state has already absorbed the drained bytes.
+fn pumpAllRuntimePanes(
+    allocator: Allocator,
+    io: Io,
+    state_dir: []const u8,
+    name: []const u8,
+    runtime_panes: *std.ArrayList(RuntimePane),
+    active_recordings: *std.ArrayList(observe.ActiveRecording),
+) void {
+    for (runtime_panes.items) |*runtime| {
+        refreshRuntimePaneExitStatus(runtime);
+        _ = pumpRuntimePaneOutput(allocator, io, state_dir, name, runtime, active_recordings) catch {};
     }
 }
 
@@ -1071,6 +1091,53 @@ test "wait for pane idle reports quiescent exited and timeout states" {
     const finished = try waitForPaneIdle(allocator, io, state_dir, "wait-pane", &exit_pane, &recordings, 2000);
     try std.testing.expectEqual(harness_shell.State.exited, finished.state);
     try std.testing.expectEqual(@as(?u8, 7), finished.exit_code);
+}
+
+test "background pump captures pane output without a send" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const state_dir = ".zig-cache/minimux-pump-tick-test";
+    Io.Dir.cwd().deleteTree(io, state_dir) catch {};
+    defer Io.Dir.cwd().deleteTree(io, state_dir) catch {};
+    try Io.Dir.cwd().createDirPath(io, state_dir ++ "/sessions/pump-tick");
+
+    var recordings: std.ArrayList(observe.ActiveRecording) = .empty;
+    defer {
+        for (recordings.items) |recording| recording.deinit(allocator);
+        recordings.deinit(allocator);
+    }
+    var panes: std.ArrayList(RuntimePane) = .empty;
+    defer {
+        for (panes.items) |*pane_runtime| pane_runtime.deinit(allocator, io);
+        panes.deinit(allocator);
+    }
+
+    var pane_pty = try pty.open(.{});
+    const argv = [_][]const u8{ "sh", "-c", "echo pump-tick-ok; sleep 600" };
+    const child = try std.process.spawn(io, .{
+        .argv = &argv,
+        .stdin = .{ .file = pane_pty.slave },
+        .stdout = .{ .file = pane_pty.slave },
+        .stderr = .{ .file = pane_pty.slave },
+    });
+    pane_pty.closeSlave(io);
+    try panes.append(allocator, .{
+        .local_id = try allocator.dupe(u8, "pane-1"),
+        .pty = pane_pty,
+        .child = child,
+        .shadow = try shadow.Engine.init(allocator, .{}),
+    });
+
+    var attempts: usize = 0;
+    var captured = false;
+    while (attempts < 200 and !captured) : (attempts += 1) {
+        pumpAllRuntimePanes(allocator, io, state_dir, "pump-tick", &panes, &recordings);
+        const visible = try panes.items[0].shadow.visibleText(allocator);
+        defer allocator.free(visible);
+        captured = std.mem.indexOf(u8, visible, "pump-tick-ok") != null;
+        if (!captured) try Io.sleep(io, .fromMilliseconds(10), .awake);
+    }
+    try std.testing.expect(captured);
 }
 
 test "runtime process status records exited child code without blocking" {
