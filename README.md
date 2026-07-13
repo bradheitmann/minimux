@@ -111,6 +111,8 @@ examples, and edge cases for every method.
   transport security boundaries.
 - [docs/adapters.md](docs/adapters.md): CustomPaneBackend and substrate
   placement adapter boundaries.
+- [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md): test layout, fixture corpora,
+  holdout conventions, and release validation.
 - [examples/README.md](examples/README.md): runnable examples.
 
 ## Boundary
