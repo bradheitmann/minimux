@@ -1,0 +1,19 @@
+{
+  "name": "cursor-move",
+  "dimensions": {"cols": 10, "rows": 4},
+  "chunks": ["abc", "\u001b[2B\u001b[3DX", "\u001b[A\u001b[2CY", "\u001b[99A\u001b[99CZ"],
+  "resizes": [],
+  "process": {"status": "running", "exit_code": null},
+  "recovery_state": "clean",
+  "expected": {
+    "visible_text": "abc      Z\n   Y\nX",
+    "cursor": {"x": 0, "y": 1},
+    "sequence_min": 12,
+    "alternate_screen": false,
+    "cells": [
+      {"x": 9, "y": 0, "text": "Z", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}},
+      {"x": 3, "y": 1, "text": "Y", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}},
+      {"x": 0, "y": 2, "text": "X", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}}
+    ]
+  }
+}

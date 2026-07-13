@@ -1,0 +1,19 @@
+{
+  "name": "erase-line",
+  "dimensions": {"cols": 16, "rows": 3},
+  "chunks": ["hello world", "\u001b[5D\u001b[K", "again", "\u001b[2K\rok"],
+  "resizes": [],
+  "process": {"status": "running", "exit_code": null},
+  "recovery_state": "clean",
+  "expected": {
+    "visible_text": "ok",
+    "cursor": {"x": 2, "y": 0},
+    "sequence_min": 22,
+    "alternate_screen": false,
+    "cells": [
+      {"x": 0, "y": 0, "text": "o", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}},
+      {"x": 1, "y": 0, "text": "k", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}},
+      {"x": 6, "y": 0, "text": " ", "attrs": {"fg": "default", "bg": "default", "bold": false, "underline": false, "inverse": false}}
+    ]
+  }
+}
