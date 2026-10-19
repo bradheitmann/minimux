@@ -166,3 +166,12 @@ sessions. Pending requests are nonblocking, capped at 16 clients and 4 MiB each,
 with an absolute five-second read deadline and a per-tick byte budget. A partial
 request cannot retain the PTY loop. Long-running requested operations still have
 their documented operation-specific behavior.
+
+## Library capabilities (0.2.0)
+
+The CLI retains the complete daemon capability set. Embedders can use a smaller
+boundary without starting a daemon: `dependency.module("minimux_proto")` exposes
+wire metadata and `dependency.module("minimux_control")` exposes bounded local
+control I/O. The full `minimux` module also exports `control`, `proto`, `session`,
+`shadow`, `snapshot`, and the existing transport and adapter modules.
+See [library capabilities](docs/LIBRARY.md) for ownership and security contracts.

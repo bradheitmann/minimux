@@ -1,0 +1,8 @@
+.{
+    .name = .minimux_consumer,
+    .fingerprint = 0x4258ecca3ebb45e7,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{ .minimux = .{ .path = "../.." } },
+    .paths = .{""},
+}

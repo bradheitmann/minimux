@@ -19,6 +19,16 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
+    // Independently importable transport boundary; no daemon is instantiated.
+    const minimux_control_mod = b.addModule("minimux_control", .{
+        .root_source_file = b.path("src/minimux/control.zig"),
+        .target = target,
+        .link_libc = true,
+    });
+
+    minimux_mod.addImport("minimux_proto", minimux_proto_mod);
+    minimux_mod.addImport("minimux_control", minimux_control_mod);
+
     const exe = b.addExecutable(.{
         .name = "minimux",
         .root_module = b.createModule(.{
@@ -77,6 +87,12 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
     run_step.dependOn(&run_cmd.step);
+
+    const proto_tests = b.addTest(.{ .root_module = minimux_proto_mod, .filters = test_filters });
+    const run_proto_tests = b.addRunArtifact(proto_tests);
+
+    const control_tests = b.addTest(.{ .root_module = minimux_control_mod, .filters = test_filters });
+    const run_control_tests = b.addRunArtifact(control_tests);
 
     const root_tests = b.addTest(.{
         .root_module = minimux_mod,
@@ -266,6 +282,8 @@ pub fn build(b: *std.Build) void {
     release_check_step.dependOn(&release_check_cmd.step);
 
     const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(&run_proto_tests.step);
+    test_step.dependOn(&run_control_tests.step);
     test_step.dependOn(&run_root_tests.step);
     test_step.dependOn(&run_cli_tests.step);
     test_step.dependOn(&run_spec_scope_tests.step);

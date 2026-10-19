@@ -1,5 +1,5 @@
 const std = @import("std");
-const proto = @import("../proto.zig");
+const proto = @import("minimux_proto");
 
 pub const Operation = enum {
     initialize,

@@ -145,3 +145,17 @@ test "control root is prepared before first daemon startup" {
 test "control peer identity fails closed for an invalid socket" {
     try std.testing.expect(!minimux.session.sameControlUser(-1));
 }
+
+// An embedding consumer gets the same types and fail-closed peer policy.
+test "control capability preserves compatibility aliases" {
+    try std.testing.expect(minimux.control.ControlInbox == minimux.daemon.ControlInbox);
+    try std.testing.expect(minimux.control.DeadlineWriter == minimux.daemon.DeadlineWriter);
+    try std.testing.expect(!minimux.control.sameControlUser(-1));
+    var inbox: minimux.control.ControlInbox = .{};
+    inbox.deinit(std.testing.allocator, std.testing.io);
+    var buffer: [16]u8 = undefined;
+    var writer = minimux.control.DeadlineWriter.init(std.testing.io, -1, &buffer);
+    writer.deadline = 0;
+    try writer.interface.writeAll("response");
+    try std.testing.expectError(error.WriteFailed, writer.interface.flush());
+}

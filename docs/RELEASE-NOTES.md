@@ -1,5 +1,15 @@
 # Release Notes
 
+## v0.2.0
+
+- Exposes bounded local control I/O as an independent Zig dependency module,
+  without daemon, session storage, or PTY dependencies.
+- Preserves daemon and session compatibility aliases, all default CLI
+  capabilities, and the existing protocol and snapshot schemas.
+- Includes canonical per-project sockets, mutual same-user peer checks, and
+  bounded request/response handling from the security review.
+- Updates the binary, Zig package, and npm installer version together.
+
 ## v0.1.1
 
 Control-plane robustness patch. Both fixes came out of driving a real
