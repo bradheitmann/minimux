@@ -155,7 +155,7 @@ pub fn create(
         .recovery_state = .clean,
         .visible_text = "",
     });
-    const socket_path = try controlSocketPath(allocator, state_dir, name);
+    const socket_path = try controlSocketPath(allocator, io, state_dir, name);
     defer allocator.free(socket_path);
     try writeSessionFile(allocator, io, state_dir, name, "control.path", socket_path);
     const daemon_log_path = try logPath(allocator, state_dir, name);
@@ -225,7 +225,7 @@ pub fn inspect(
         false
     else
         try isProcessAlive(allocator, io, pid);
-    const socket_path = try controlSocketPath(allocator, state_dir, name);
+    const socket_path = try controlSocketPath(allocator, io, state_dir, name);
     errdefer allocator.free(socket_path);
     if (!alive) {
         Io.Dir.cwd().deleteFile(io, socket_path) catch |err| switch (err) {
@@ -261,7 +261,7 @@ pub fn terminate(
 
     try writeSessionFile(allocator, io, state_dir, name, "lifecycle.state", "terminated\n");
     try appendSessionFile(allocator, io, state_dir, name, "daemon.log", "session terminated\n");
-    const socket_path = try controlSocketPath(allocator, state_dir, name);
+    const socket_path = try controlSocketPath(allocator, io, state_dir, name);
     defer allocator.free(socket_path);
     Io.Dir.cwd().deleteFile(io, socket_path) catch |err| switch (err) {
         error.FileNotFound => {},
@@ -279,7 +279,7 @@ pub fn markTerminated(
 ) !SessionInfo {
     try writeSessionFile(allocator, io, state_dir, name, "lifecycle.state", "terminated\n");
     try appendSessionFile(allocator, io, state_dir, name, "daemon.log", "session terminated\n");
-    const socket_path = try controlSocketPath(allocator, state_dir, name);
+    const socket_path = try controlSocketPath(allocator, io, state_dir, name);
     defer allocator.free(socket_path);
     Io.Dir.cwd().deleteFile(io, socket_path) catch |err| switch (err) {
         error.FileNotFound => {},
@@ -296,7 +296,7 @@ pub fn markUnavailable(
 ) !SessionInfo {
     try writeSessionFile(allocator, io, state_dir, name, "lifecycle.state", "unavailable\n");
     try appendSessionFile(allocator, io, state_dir, name, "daemon.log", "control socket unavailable\n");
-    const socket_path = try controlSocketPath(allocator, state_dir, name);
+    const socket_path = try controlSocketPath(allocator, io, state_dir, name);
     defer allocator.free(socket_path);
     Io.Dir.cwd().deleteFile(io, socket_path) catch |err| switch (err) {
         error.FileNotFound => {},
@@ -484,14 +484,38 @@ pub fn paneVisibleText(
     return readPaneFileOptional(allocator, io, state_dir, name, local_id, "visible.txt");
 }
 
-pub fn controlSocketPath(allocator: Allocator, state_dir: []const u8, name: []const u8) ![]u8 {
+/// Establish the root before spawning a daemon that derives its socket identity.
+pub fn prepareStateRoot(allocator: Allocator, io: Io, state_dir: []const u8) ![:0]u8 {
+    _ = try Io.Dir.cwd().createDirPathStatus(io, state_dir, .fromMode(0o700));
+    return Io.Dir.cwd().realPathFileAlloc(io, state_dir, allocator);
+}
+
+extern "c" fn getpeereid(fd: std.c.fd_t, uid: *std.c.uid_t, gid: *std.c.gid_t) c_int;
+
+pub fn sameControlUser(fd: std.c.fd_t) bool {
+    if (@import("builtin").os.tag == .linux) {
+        const Credentials = extern struct { pid: c_int, uid: std.c.uid_t, gid: std.c.gid_t };
+        var credentials: Credentials = undefined;
+        var length: std.c.socklen_t = @sizeOf(Credentials);
+        return std.c.getsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.PEERCRED, &credentials, &length) == 0 and
+            length == @sizeOf(Credentials) and credentials.uid == std.c.geteuid();
+    } else {
+        var uid: std.c.uid_t = undefined;
+        var gid: std.c.gid_t = undefined;
+        return getpeereid(fd, &uid, &gid) == 0 and uid == std.c.geteuid();
+    }
+}
+
+pub fn controlSocketPath(allocator: Allocator, io: Io, state_dir: []const u8, name: []const u8) ![]u8 {
     try domain.validateSessionName(name);
+    const canonical_root = try Io.Dir.cwd().realPathFileAlloc(io, state_dir, allocator);
+    defer allocator.free(canonical_root);
     var hasher = std.hash.Wyhash.init(0);
-    hasher.update(state_dir);
+    hasher.update(canonical_root);
     hasher.update("\x00");
     hasher.update(name);
     const control_id = hasher.final();
-    return std.fmt.allocPrint(allocator, "/tmp/minimux-{x}-{s}.sock", .{ control_id, name });
+    return std.fmt.allocPrint(allocator, "/tmp/minimux-{d}-{x}.sock", .{ std.c.geteuid(), control_id });
 }
 
 pub fn logPath(allocator: Allocator, state_dir: []const u8, name: []const u8) ![]u8 {
@@ -544,7 +568,7 @@ pub fn waitForControlSocket(
     name: []const u8,
     timeout_ms: u64,
 ) !void {
-    const socket_path = try controlSocketPath(allocator, state_dir, name);
+    const socket_path = try controlSocketPath(allocator, io, state_dir, name);
     defer allocator.free(socket_path);
 
     const interval_ms: u64 = 25;
@@ -762,7 +786,7 @@ pub fn snapshot(
         defer allocator.free(recovered_count);
         try writeSessionFile(allocator, io, state_dir, name, "commands.count", recovered_count);
         report.deinit(allocator);
-        const socket_path = try controlSocketPath(allocator, state_dir, name);
+        const socket_path = try controlSocketPath(allocator, io, state_dir, name);
         defer allocator.free(socket_path);
         Io.Dir.cwd().deleteFile(io, socket_path) catch |err| switch (err) {
             error.FileNotFound => {},

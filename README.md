@@ -153,3 +153,16 @@ minimux is licensed under the [Apache License, Version 2.0](LICENSE). The
 Apache-2.0 patent grant is intentional: minimux is control-surface
 infrastructure, and downstream orchestrators need patent safety alongside
 copyright permission.
+
+### Local control-channel isolation
+
+Control socket identity includes the canonical absolute state root, the session
+name and the effective user ID. Relative and absolute aliases of the same state
+root share one endpoint; distinct project roots do not. Sockets are mode 0600 and
+connections must have the same effective user (SO_PEERCRED on Linux, getpeereid
+on macOS). Startup refuses to unlink an existing endpoint. Restart pre-upgrade
+daemons before using the new socket naming scheme; inspect/recovery handles dead
+sessions. Pending requests are nonblocking, capped at 16 clients and 4 MiB each,
+with an absolute five-second read deadline and a per-tick byte budget. A partial
+request cannot retain the PTY loop. Long-running requested operations still have
+their documented operation-specific behavior.
