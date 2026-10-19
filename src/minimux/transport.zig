@@ -1,6 +1,6 @@
 const std = @import("std");
 const crypto = @import("crypto.zig");
-const proto = @import("proto.zig");
+const proto = @import("minimux_proto");
 
 const Aead = std.crypto.aead.chacha_poly.ChaCha20Poly1305;
 

@@ -1,7 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const version = "0.1.1";
+pub const version = "0.2.0";
 pub const product_name = "minimux";
 pub const status = "prototype";
 pub const zig_minimum_version = "0.16.0";
@@ -12,6 +12,7 @@ pub const adapters = struct {
     pub const docker = @import("adapters/docker.zig");
     pub const substrate = @import("adapters/substrate.zig");
 };
+pub const control = @import("minimux_control");
 pub const daemon = @import("daemon.zig");
 pub const crypto = @import("crypto.zig");
 pub const domain = @import("domain.zig");
@@ -20,7 +21,7 @@ pub const platform = switch (builtin.os.tag) {
     .linux => @import("platform/linux.zig"),
     else => @import("platform/darwin.zig"),
 };
-pub const proto = @import("proto.zig");
+pub const proto = @import("minimux_proto");
 pub const pty = @import("pty.zig");
 pub const journal = @import("journal.zig");
 pub const harness_shell = @import("harness_shell.zig");
@@ -100,6 +101,7 @@ test "boundary excludes upstream ownership" {
 
 test {
     _ = adapters;
+    _ = control;
     _ = daemon;
     _ = crypto;
     _ = domain;

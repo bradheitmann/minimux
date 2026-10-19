@@ -204,7 +204,7 @@ check_release_checklist() {
 check_release_evidence() {
   local log="$EVIDENCE_DIR/checks/release-evidence.log"
   : >"$log"
-  for required in build test c-smoke fuzz-transport holdout-s002 holdout-s006 holdout-s008 holdout-s011 holdout-s012 holdout-s013 holdout-s014 docs-prototype; do
+  for required in build library-consumer test c-smoke fuzz-transport holdout-s002 holdout-s006 holdout-s008 holdout-s011 holdout-s012 holdout-s013 holdout-s014 docs-prototype; do
     if [ ! -f "$EVIDENCE_DIR/commands/$required.log" ]; then
       printf 'missing_command_evidence %s\n' "$required" >>"$log"
     fi
@@ -222,6 +222,7 @@ need_tool rg
 need_tool git
 
 run_gate build zig build --summary all
+run_gate library-consumer zig build test --build-file test/consumer/build.zig --cache-dir .zig-cache/consumer --summary all
 run_gate test zig build test --summary all
 run_gate c-smoke zig build c-smoke --summary all
 run_gate fuzz-transport zig build fuzz-transport --summary all

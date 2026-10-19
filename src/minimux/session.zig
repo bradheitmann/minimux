@@ -91,22 +91,22 @@ pub const PaneList = struct {
 
 pub fn writeSessionInfoJson(writer: *Io.Writer, info: SessionInfo) !void {
     try writer.writeAll("{\"name\":");
-    try @import("proto.zig").writeJsonString(writer, info.name);
+    try @import("minimux_proto").writeJsonString(writer, info.name);
     try writer.print(",\"daemon_pid\":{d},\"daemon_alive\":{},\"command_count\":{d},\"state\":", .{
         info.daemon_pid,
         info.daemon_alive,
         info.command_count,
     });
-    try @import("proto.zig").writeJsonString(writer, info.lifecycle_state);
+    try @import("minimux_proto").writeJsonString(writer, info.lifecycle_state);
     try writer.writeAll(",\"control_socket\":");
-    try @import("proto.zig").writeJsonString(writer, info.control_socket);
+    try @import("minimux_proto").writeJsonString(writer, info.control_socket);
     try writer.writeAll(",\"log_path\":");
-    try @import("proto.zig").writeJsonString(writer, info.log_path);
+    try @import("minimux_proto").writeJsonString(writer, info.log_path);
     try writer.writeAll("}");
 }
 
 pub fn writePaneInfoJson(writer: *Io.Writer, info: PaneInfo) !void {
-    const proto = @import("proto.zig");
+    const proto = @import("minimux_proto");
     try writer.writeAll("{\"pane_id\":");
     try pty.writePaneId(writer, info.session, info.local_id);
     try writer.writeAll(",\"session\":");
@@ -490,21 +490,8 @@ pub fn prepareStateRoot(allocator: Allocator, io: Io, state_dir: []const u8) ![:
     return Io.Dir.cwd().realPathFileAlloc(io, state_dir, allocator);
 }
 
-extern "c" fn getpeereid(fd: std.c.fd_t, uid: *std.c.uid_t, gid: *std.c.gid_t) c_int;
-
-pub fn sameControlUser(fd: std.c.fd_t) bool {
-    if (@import("builtin").os.tag == .linux) {
-        const Credentials = extern struct { pid: c_int, uid: std.c.uid_t, gid: std.c.gid_t };
-        var credentials: Credentials = undefined;
-        var length: std.c.socklen_t = @sizeOf(Credentials);
-        return std.c.getsockopt(fd, std.posix.SOL.SOCKET, std.posix.SO.PEERCRED, &credentials, &length) == 0 and
-            length == @sizeOf(Credentials) and credentials.uid == std.c.geteuid();
-    } else {
-        var uid: std.c.uid_t = undefined;
-        var gid: std.c.gid_t = undefined;
-        return getpeereid(fd, &uid, &gid) == 0 and uid == std.c.geteuid();
-    }
-}
+/// Compatibility alias; new consumers may import minimux.control directly.
+pub const sameControlUser = @import("minimux_control").sameControlUser;
 
 pub fn controlSocketPath(allocator: Allocator, io: Io, state_dir: []const u8, name: []const u8) ![]u8 {
     try domain.validateSessionName(name);

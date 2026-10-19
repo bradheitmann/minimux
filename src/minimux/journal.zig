@@ -1,6 +1,6 @@
 const std = @import("std");
 const domain = @import("domain.zig");
-const proto = @import("proto.zig");
+const proto = @import("minimux_proto");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
