@@ -87,8 +87,10 @@ pub const ControlInbox = struct {
                 const line_end = std.mem.indexOfScalar(u8, buffer[0..n], '\n');
                 const used = line_end orelse n;
                 if (self.pending.items[index].bytes.items.len + used > max_control_request_bytes) {
-                    disconnected = true;
-                    break;
+                    self.drop(allocator, io, index);
+                    // The outer loop records this contained rejection, preserving
+                    // diagnostics without retaining or parsing attacker bytes.
+                    return error.ControlRequestTooLarge;
                 }
                 try self.pending.items[index].bytes.appendSlice(allocator, buffer[0..used]);
                 if (line_end != null) {
