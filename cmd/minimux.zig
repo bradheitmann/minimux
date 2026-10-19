@@ -947,6 +947,7 @@ fn sendControlRequest(
     var address = try net.UnixAddress.init(info.control_socket);
     var stream = address.connect(io) catch return error.DaemonNotRunning;
     defer stream.close(io);
+    if (!minimux.session.sameControlUser(stream.socket.handle)) return error.UntrustedControlPeer;
 
     var request_writer_alloc: Io.Writer.Allocating = .init(allocator);
     defer request_writer_alloc.deinit();

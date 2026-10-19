@@ -18,6 +18,138 @@ const wait_idle_max_drained_commands: usize = 32;
 const wait_idle_drain_limit_bytes: usize = 256 * 1024;
 const max_control_request_bytes: usize = 4 * 1024 * 1024;
 
+const PendingControl = struct {
+    stream: net.Stream,
+    bytes: std.ArrayList(u8) = .empty,
+    deadline: i96,
+};
+
+/// Slow clients retain bounded state, never the daemon's PTY/control loop.
+pub const ControlInbox = struct {
+    pending: std.ArrayList(PendingControl) = .empty,
+    pub const Request = struct {
+        stream: net.Stream,
+        text: []u8,
+    };
+
+    pub fn deinit(self: *ControlInbox, allocator: Allocator, io: Io) void {
+        while (self.pending.items.len > 0) self.drop(allocator, io, self.pending.items.len - 1);
+        self.pending.deinit(allocator);
+    }
+
+    fn drop(self: *ControlInbox, allocator: Allocator, io: Io, index: usize) void {
+        var item = self.pending.swapRemove(index);
+        item.stream.close(io);
+        item.bytes.deinit(allocator);
+    }
+
+    pub fn next(self: *ControlInbox, allocator: Allocator, io: Io, server: *net.Server) !?Request {
+        const now = Io.Timestamp.now(io, .awake).nanoseconds;
+        var listener = [_]std.posix.pollfd{.{ .fd = server.socket.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+        if (try std.posix.poll(&listener, 0) > 0) {
+            const stream = try server.accept(io);
+            if (self.pending.items.len >= 16 or !session.sameControlUser(stream.socket.handle)) {
+                stream.close(io);
+            } else {
+                self.pending.append(allocator, .{ .stream = stream, .deadline = now + 5 * std.time.ns_per_s }) catch |err| {
+                    stream.close(io);
+                    return err;
+                };
+            }
+        }
+        var index: usize = 0;
+        while (index < self.pending.items.len) {
+            if (now >= self.pending.items[index].deadline) {
+                self.drop(allocator, io, index);
+                return error.ControlRequestTimedOut;
+            }
+            var disconnected = false;
+            var budget: usize = 256 * 1024;
+            while (budget > 0) {
+                var buffer: [16 * 1024]u8 = undefined;
+                const count = std.c.recv(self.pending.items[index].stream.socket.handle, &buffer, @min(budget, buffer.len), std.posix.MSG.DONTWAIT);
+                if (count < 0) {
+                    switch (std.posix.errno(count)) {
+                        .AGAIN => break,
+                        .INTR => continue,
+                        else => {
+                            disconnected = true;
+                            break;
+                        },
+                    }
+                }
+                if (count == 0) {
+                    disconnected = true;
+                    break;
+                }
+                const n: usize = @intCast(count);
+                budget -= n;
+                const line_end = std.mem.indexOfScalar(u8, buffer[0..n], '\n');
+                const used = line_end orelse n;
+                if (self.pending.items[index].bytes.items.len + used > max_control_request_bytes) {
+                    self.drop(allocator, io, index);
+                    // The outer loop records this contained rejection, preserving
+                    // diagnostics without retaining or parsing attacker bytes.
+                    return error.ControlRequestTooLarge;
+                }
+                try self.pending.items[index].bytes.appendSlice(allocator, buffer[0..used]);
+                if (line_end != null) {
+                    var complete = self.pending.swapRemove(index);
+                    errdefer {
+                        complete.stream.close(io);
+                        complete.bytes.deinit(allocator);
+                    }
+                    return .{ .stream = complete.stream, .text = try complete.bytes.toOwnedSlice(allocator) };
+                }
+            }
+            if (disconnected) self.drop(allocator, io, index) else index += 1;
+        }
+        return null;
+    }
+};
+
+/// A client that stops reading may cost at most one second of response time.
+/// Start the deadline at the first write, after any long-running operation.
+pub const DeadlineWriter = struct {
+    interface: Io.Writer,
+    io: Io,
+    fd: std.c.fd_t,
+    deadline: ?i96 = null,
+
+    pub fn init(io: Io, fd: std.c.fd_t, buffer: []u8) DeadlineWriter {
+        return .{ .interface = .{ .vtable = &.{ .drain = drain }, .buffer = buffer }, .io = io, .fd = fd };
+    }
+
+    fn drain(writer: *Io.Writer, data: []const []const u8, splat: usize) Io.Writer.Error!usize {
+        const self: *DeadlineWriter = @alignCast(@fieldParentPtr("interface", writer));
+        if (self.deadline == null) self.deadline = Io.Timestamp.now(self.io, .awake).nanoseconds + std.time.ns_per_s;
+        const bytes = blk: {
+            if (writer.buffered().len > 0) break :blk writer.buffered();
+            for (data[0 .. data.len - 1]) |part| if (part.len > 0) {
+                break :blk part;
+            };
+            if (splat > 0) break :blk data[data.len - 1];
+            break :blk &.{};
+        };
+        if (bytes.len == 0) return 0;
+        while (true) {
+            const remaining = self.deadline.? - Io.Timestamp.now(self.io, .awake).nanoseconds;
+            if (remaining <= 0) return error.WriteFailed;
+            const count = std.c.send(self.fd, bytes.ptr, bytes.len, std.posix.MSG.DONTWAIT | std.posix.MSG.NOSIGNAL);
+            if (count > 0) return writer.consume(@intCast(count));
+            if (count == 0) return error.WriteFailed;
+            switch (std.posix.errno(count)) {
+                .INTR => continue,
+                .AGAIN => {
+                    var writable = [_]std.posix.pollfd{.{ .fd = self.fd, .events = std.posix.POLL.OUT, .revents = 0 }};
+                    _ = std.posix.poll(&writable, @intCast(@min(25, @divTrunc(remaining, std.time.ns_per_ms)))) catch return error.WriteFailed;
+                },
+                else => return error.WriteFailed,
+            }
+        }
+    }
+};
+
 const ControlParams = struct {
     session: []const u8 = "",
     command: []const u8 = "",
@@ -88,13 +220,15 @@ pub fn spawnPrototype(
     name: []const u8,
     argv: []const []const u8,
 ) !i64 {
+    const canonical_root = try session.prepareStateRoot(allocator, io, state_dir);
+    defer allocator.free(canonical_root);
     var daemon_args: std.ArrayList([]const u8) = .empty;
     defer daemon_args.deinit(allocator);
 
     try daemon_args.append(allocator, exe_path);
     try daemon_args.append(allocator, "__daemon");
     try daemon_args.append(allocator, "--state-dir");
-    try daemon_args.append(allocator, state_dir);
+    try daemon_args.append(allocator, canonical_root);
     try daemon_args.append(allocator, "--name");
     try daemon_args.append(allocator, name);
     try daemon_args.append(allocator, "--");
@@ -116,17 +250,17 @@ pub fn runPrototypeLoop(
     name: []const u8,
     argv: []const []const u8,
 ) !void {
-    const control_socket = try session.controlSocketPath(allocator, state_dir, name);
+    const control_socket = try session.controlSocketPath(allocator, io, state_dir, name);
     defer allocator.free(control_socket);
-    Io.Dir.cwd().deleteFile(io, control_socket) catch |err| switch (err) {
-        error.FileNotFound => {},
-        else => |e| return e,
-    };
-
+    // Never unlink a live or unknown endpoint. Recovery removes a dead
+    // session's socket before a new daemon can bind its canonical identity.
     var control_address = try net.UnixAddress.init(control_socket);
     var control_server = try control_address.listen(io, .{});
     defer control_server.deinit(io);
     defer Io.Dir.cwd().deleteFile(io, control_socket) catch {};
+    const socket_z = try allocator.dupeZ(u8, control_socket);
+    defer allocator.free(socket_z);
+    if (std.c.chmod(socket_z, 0o600) != 0) return error.SocketPermissionDenied;
     try session.markControlSocketReady(allocator, io, state_dir, name);
 
     var session_pty = try pty.open(.{});
@@ -166,6 +300,8 @@ pub fn runPrototypeLoop(
     }
     var next_recording_index: usize = 1;
     var next_tap_index: usize = 1;
+    var control_inbox: ControlInbox = .{};
+    defer control_inbox.deinit(allocator, io);
 
     while (true) {
         refreshChildExitStatus(&child, &shell_process_state, &shell_exit_code);
@@ -177,6 +313,7 @@ pub fn runPrototypeLoop(
             allocator,
             io,
             &control_server,
+            &control_inbox,
             session_pty.master,
             stdout,
             state_dir,
@@ -252,6 +389,7 @@ fn acceptControlRequest(
     allocator: Allocator,
     io: Io,
     server: *net.Server,
+    inbox: *ControlInbox,
     session_master: Io.File,
     stdout: *Io.Reader,
     state_dir: []const u8,
@@ -265,31 +403,17 @@ fn acceptControlRequest(
     next_recording_index: *usize,
     next_tap_index: *usize,
 ) !?bool {
-    var poll_fds = [_]std.posix.pollfd{.{
-        .fd = server.socket.handle,
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    }};
-    const ready = try std.posix.poll(&poll_fds, 0);
-    if (ready == 0) return null;
-
-    var stream = try server.accept(io);
+    const request_message = (try inbox.next(allocator, io, server)) orelse return null;
+    var stream = request_message.stream;
     defer stream.close(io);
-
-    var request_buffer: [8192]u8 = undefined;
-    var stream_reader = stream.reader(io, &request_buffer);
-    const request_text = (try proto.readJsonLine(
-        allocator,
-        &stream_reader.interface,
-        max_control_request_bytes,
-    )) orelse return null;
+    const request_text = request_message.text;
     defer allocator.free(request_text);
     var parsed = try std.json.parseFromSlice(ControlRequest, allocator, request_text, .{ .ignore_unknown_fields = true });
     defer parsed.deinit();
     const request = parsed.value;
 
     var response_buffer: [8192]u8 = undefined;
-    var stream_writer = stream.writer(io, &response_buffer);
+    var stream_writer = DeadlineWriter.init(io, stream.socket.handle, &response_buffer);
     const writer = &stream_writer.interface;
 
     if (!std.mem.eql(u8, request.params.session, name)) {
