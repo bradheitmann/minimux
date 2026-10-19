@@ -61,7 +61,7 @@ pub const ControlInbox = struct {
         while (index < self.pending.items.len) {
             if (now >= self.pending.items[index].deadline) {
                 self.drop(allocator, io, index);
-                continue;
+                return error.ControlRequestTimedOut;
             }
             var disconnected = false;
             var budget: usize = 256 * 1024;

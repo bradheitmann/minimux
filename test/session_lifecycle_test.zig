@@ -114,7 +114,7 @@ test "partial control clients do not block complete clients" {
     try std.testing.expectEqualStrings(message[0 .. message.len - 1], ready.text);
     try std.testing.expectEqual(@as(usize, 1), inbox.pending.items.len);
     inbox.pending.items[0].deadline = 0;
-    try std.testing.expect((try inbox.next(allocator, io, &server)) == null);
+    try std.testing.expectError(error.ControlRequestTimedOut, inbox.next(allocator, io, &server));
     try std.testing.expectEqual(@as(usize, 0), inbox.pending.items.len);
 }
 
